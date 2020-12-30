@@ -1,22 +1,12 @@
 import numpy as np, random
 from scipy.linalg import solve_triangular, cholesky
-from scipy.special import gammaln, digamma, polygamma, logsumexp
-from scipy.optimize import root_scalar
+from scipy.special import loggamma, logsumexp
 
-class StudentTMixture():
+class StudentTMix_Model_Core():
 
     def __init__(self, n_components = 2, tol=0.001,
-            reg_covar=1e-06, max_iter=500, n_init=1,
+            reg_covar=1e-06, max_iter=300, n_init=1,
             fixed_df = None, random_state=None):
-        #General model parameters specified by user.
-        self.fixed_df = fixed_df
-        self.n_components=n_components
-        self.tol = tol
-        self.reg_covar = reg_covar
-        self.max_iter = max_iter
-        self.n_init = n_init
-        self.random_state = random_state
-
         #Learned parameters optimized during a fit.
         self.mix_weights_ = None
         self.df_ = None
@@ -24,24 +14,23 @@ class StudentTMixture():
         self.scale_ = None
         self.scale_cholesky_ = None
         self.converged_ = False
-        self.n_iter_ = 0
 
 
     #Function to check whether the input has the correct dimensionality.
     def check_inputs(self, X):
         #Check first whether model has been fitted.
         self.check_model()
-        if X.shape[1] != self.scale_.shape[1]:
+        if X.shape[1] != self.covariances_.shape[1]:
             raise ValueError("Dimension of data passed does not match "
                     "dimension of data used to fit the model! The "
                     "data used to fit the model has D=%s"
-                    %self.scale_.shape[0])
+                    %self.covariances_.shape[0])
 
     #Function to check whether the model has been fitted yet.
     def check_model(self):
         if self.loc_ is None:
             raise ValueError("The model has not been fitted yet.")
-        if self.converged_ == False:
+        if self.converged == False:
             raise ValueError("Model fitting did not converge; no "
                     "predictions can be generated.")
 
@@ -50,16 +39,16 @@ class StudentTMixture():
     #criteria. We require that N > 2*D and N > 3*n_components.
     def check_fitting_data(self, X):
         if X.shape[0] <= 2*X.shape[1]:
-            raise ValueError("Too few datapoints for dataset "
-            "dimensionality. You should have at least 2 datapoints per "
-            "dimension (preferably more).")
+            raise ValueError("Too few datapoints for dataset
+            dimensionality. You should have at least 2 datapoints per
+            dimension (preferably more).")
         if X.shape[0] <= 3*self.n_components:
-            raise ValueError("Too few datapoints for number of components "
-            "in mixture. You should have at least 3 datapoints per mixture "
-            "component (preferably more).")
+            raise ValueError("Too few datapoints for number of components
+            in mixture. You should have at least 3 datapoints per mixture
+            component (preferably more).")
         if self.n_components < 1 or self.n_components > 100:
-            raise ValueError("Too many or too few components. This class will only "
-            "fit models that have at least 1 component and fewer than 100.")
+            raise ValueError("Too many or too few components. This class will only
+            fit models that have at least 1 component and fewer than 100.")
         if self.max_iter < 1:
             raise ValueError("There must be at least one iteration to "
                     "fit the model.")
@@ -75,10 +64,11 @@ class StudentTMixture():
             self.Mstep(X, resp, z)
             change = current_bound - lower_bound
             if abs(change) < self.tol:
-                self.converged_ = True
+                self.converged = True
+                if change < 0:
+                    print("Error! Lower bound DECREASED!")
                 break
-            lower_bound = current_bound
-        if self.converged_ == False:
+        if self.converged == False:
             print("Fit did not converge! Try increasing max_iter or tol or check "
                 "data for possible issues.")
 
@@ -87,64 +77,36 @@ class StudentTMixture():
         maha_dist = self.maha_distance(X)
         logprobs = self.get_log_prob(X, maha_dist)
         logprob_norm = logsumexp(logprobs, axis=1)
-        with np.errstate(under="ignore"):
-            logprobs = logprobs - logprob_norm[:,np.newaxis]
+        logprobs = logprobs - logprobnorm[:,np.newaxis]
         z = (self.df_ + X.shape[1])[np.newaxis,:]
         z = z / (self.df_[np.newaxis,:] + maha_dist)
-        return np.exp(logprobs), z, np.mean(logprob_norm)
+        return np.exp(logprobs), z, np.mean(logprobnorm)
 
 
     def Mstep(self, X, resp, z):
-        self.mix_weights_ = np.mean(resp, axis=0)
+        self.mix_weights_ = np.sum(resp, axis=0) / resp.shape[0]
         weights = resp*z
-        self.loc_ = np.dot(weights.T, X)
-        self.loc_ = self.loc_ / np.sum(weights, axis=0)[:,np.newaxis]
-        resp_sum = np.sum(resp, axis=0) + 10 * np.finfo(resp.dtype).eps
+        self.loc_ = np.sum(weights[:,np.newaxis,:] * X[:,:,np.newaxis], axis=0).T
+        self.loc_ = self.loc_ / np.sum(weights, axis=0)[np.newaxis,:]
+        scale_mats = np.empty((X.shape[1], X.shape[1], self.n_components))
+        scale_chol = np.empty((X.shape[1], X.shape[1], self.n_components))
+        resp_sum = np.sum(resp, axis=0)
         for i in range(self.n_components):
-            scaled_x = X - self.loc_[i,:][np.newaxis,:]
-            self.scale_[:,:,i] = np.dot(weights[:,i]*scaled_x.T,
-                            scaled_x) / resp_sum[i]
-            self.scale_[:,:,i].flat[::X.shape[1] + 1] += self.reg_covar
-            self.scale_cholesky_[:,:,i] = cholesky(self.scale_[:,:,i], lower=True)
+            scaled_x = X - self.loc[i,:]
+            scale_mats[:,:,i] = np.dot(weights[:,i] * scaled_x.T, scaled_x) / resp_sum[i]
+            scale_mats[::X.shape[1] + 1] += self.reg_covar
+            scale_chol.append(cholesky(scale_mats[:,:,i]))
         if self.fixed_df is None:
             self.update_df(X, resp, z)
 
-
-    def get_lower_bound(self, logprobs, resp):
-        weight_term = resp*np.log(self.mix_weights_[np.newaxis,:])
-        prob_term = resp*logprobs
-        return np.sum(prob_term + weight_term)
-
-
     def update_df(self, X, resp, z):
-        for i in range(self.n_components):
-            low_end = self.actual_loglik_df(1, resp, z, i)
-            high_end = self.actual_loglik_df(250, resp, z, i)
-            if np.sign(low_end) == np.sign(high_end):
-                self.df_[i] = 250
-            elif low_end >= 0 and high_end >= 0:
-                self.df_[i] = 250
-            else:
-                sol = root_scalar(self.actual_loglik_df, args=(resp, z, i), 
-                    method="brentq", bracket=[1,250])
-                if sol.converged:
-                    self.df_[i] = sol.root
-
-
-    def actual_loglik_df(self, nu, resp, z, comp_num):
-        result = -digamma(nu*0.5) + np.log(nu*0.5)
-        result += (1/np.sum(resp[:,comp_num])) * np.sum(resp[:,comp_num]*
-                (np.log(z[:,comp_num]) - z[:,comp_num]))
-        result += 1 + digamma(0.5*(nu+resp.shape[1])) - np.log(0.5*(nu+resp.shape[1]))
-        return result
-
-
+        pass
 
     def maha_distance(self, X):
         maha_dist = []
         for i in range(self.n_components):
-            y = X - self.loc_[i,:][np.newaxis,:]
-            y = solve_triangular(self.scale_cholesky_[:,:,i], y.T).T
+            y = X - self.loc_[i,:]
+            y = solve_triangular(self.covar_cholesky[:,:,i], y.T).T
             maha_dist.append(np.sum(y**2, axis=1))
         return np.stack(maha_dist, axis=-1)
 
@@ -155,22 +117,22 @@ class StudentTMixture():
     #with the closest center for the purposes of calculating covariance.
     def initialize_params(self, X):
         self.loc_ = [X[random.randint(0, X.shape[0]-1), :]]
-        self.mix_weights_ = np.empty(self.n_components)
-        self.mix_weights_.fill(1/self.n_components)
+        if self.n_components == 1:
+            return
         dist_arr_list = []
         for i in range(1, self.n_components):
             dist_arr = np.sum((X - self.loc_[i-1])**2, axis=1)
             dist_arr_list.append(dist_arr)
-            distmat = np.stack(dist_arr_list, axis=-1)
+            distmat = np.concatenate(dist_arr_list, axis=1)
             min_dist = np.min(distmat, axis=1)
             min_dist = min_dist / np.sum(min_dist)
             next_center_id = np.random.choice(distmat.shape[0], size=1, p=min_dist)
-            self.loc_.append(X[next_center_id[0],:])
+            self.loc_.append(X[next_center_id,:])
 
         self.loc_ = np.stack(self.loc_)
         assignments = np.argmin(distmat, axis=1)
         #For initialization, set all covariance matrices to I.
-        self.scale_ = [np.eye(X.shape[1]) for i in range(self.n_components)]
+        self.scale_ = [np.eye(X.shape[0]) for i in range(self.n_components_)]
         self.scale_ = np.stack(self.scale_, axis=-1)
         self.scale_cholesky_ = np.copy(self.scale_)
         self.df_ = np.empty(self.n_components)
@@ -188,13 +150,13 @@ class StudentTMixture():
         else:
             maha_dist = 1 + precalc_dist / self.df_[np.newaxis,:]
         maha_dist = -0.5*(self.df_ + X.shape[1])[np.newaxis,:]*np.log(maha_dist)
-        const_term = gammaln(0.5*(self.df_ + X.shape[1])) - gammaln(0.5*self.df_)
-        const_term -= 0.5*X.shape[1]*(np.log(self.df_) + np.log(np.pi))
-        scale_det = [np.sum(np.log(np.diag(self.scale_cholesky_[:,:,i])))
-                        for i in range(self.n_components)]
-        scale_det = -np.asarray(scale_det)
-        return scale_det[np.newaxis,:] + const_term[np.newaxis,:] + maha_dist + np.log(self.mix_weights_[np.newaxis,:])
-
+        const_term = loggamma(0.5*(self.df_ + X.shape[1]))
+        const_term -= loggamma(0.5*self.df_)
+        const_term -= 0.5*X.shape[1]*(self.df_ + np.pi)
+        scale_det = [np.sum(np.diag(self.scale_cholesky_[:,:,i]))
+                        for i in self.n_components]
+        scale_det = -0.5*np.asarray(scale_det)
+        return scale_det[np.newaxis,:] + const_term[np.newaxis,:] + maha_dist
 
     def predict(self, X):
         probs = self.predict_proba(X)
@@ -202,9 +164,7 @@ class StudentTMixture():
 
     def predict_proba(self, X):
         self.check_inputs(X)
-        logprob = self.get_log_prob(X)
-        logprob = logprob - logsumexp(logprob, axis=1)[:,np.newaxis]
-        return np.exp(logprob)
+        return np.exp(self.get_log_prob(X))
 
 
     def sample(self, n_samples):
@@ -220,22 +180,9 @@ class StudentTMixture():
         return self.predict(X)
 
 
-    def get_ellipses(self, mag_factor=1):
-        if self.scale_[:,:,0].shape[0] > 2:
-            raise ValueError("This function will only generate elipse coordinates for "
-                    "2d datasets.")
-            return
-        eigvals, eigvecs = [], []
-        elipses = []
-        base_coords = np.linspace(0, 2*np.pi, 250)
-        polar_coords = np.empty((250,2))
-        polar_coords[:,0] = np.cos(base_coords)
-        polar_coords[:,1] = np.sin(base_coords)
-        for i in range(self.n_components):
-            val, vec = np.eigh(self.scale_[:,:,i])
-            eigvals.append(val)
-            eigvecs.append(vec)
-            
+    def get_params(self, X):
+        pass
+
 
     def aic(self, X):
         pass
