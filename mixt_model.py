@@ -1,15 +1,25 @@
 import numpy as np, random
 from scipy.linalg import solve_triangular, cholesky
 from scipy.special import gammaln, digamma, polygamma, logsumexp
-from scipy.optimize import root_scalar
+
+
+#Note that we require the user to
+#specify the degrees of freedom. You CAN using the EM algorithm do MAP estimation
+#over location, scale and df simultaneously BUT df is a nuisance because 1) it adds
+#an extra (frequently unnecessary) parameter, 2) it must be obtained using an
+#iterative algorithm within the M-step, so it slows things down considerably.
+#Moreover, (see et al.), nu=4 is a good value for most cases
+#where you need a student T because you are worried about outliers. Large values
+#for nu are basically an MVN anyway, while nu=1 is more heavy-tailed than you
+#usually need in practice. So, we require user to specify nu and default to 4.
 
 class StudentTMixture():
 
     def __init__(self, n_components = 2, tol=0.001,
             reg_covar=1e-06, max_iter=500, n_init=1,
-            fixed_df = None, random_state=None):
+            df = 4, random_state=None):
         #General model parameters specified by user.
-        self.fixed_df = fixed_df
+        self.df_ = float(df)
         self.n_components=n_components
         self.tol = tol
         self.reg_covar = reg_covar
@@ -19,10 +29,10 @@ class StudentTMixture():
 
         #Learned parameters optimized during a fit.
         self.mix_weights_ = None
-        self.df_ = None
         self.loc_ = None
         self.scale_ = None
         self.scale_cholesky_ = None
+        self.scale_inv_cholesky_ = None
         self.converged_ = False
         self.n_iter_ = 0
 
@@ -63,6 +73,14 @@ class StudentTMixture():
         if self.max_iter < 1:
             raise ValueError("There must be at least one iteration to "
                     "fit the model.")
+        if self.df_ < 1:
+            raise ValueError("Degrees of freedom must be greater than or equal to "
+                    "1.")
+        if self.df_ > 1000:
+            raise ValueError("Degrees of freedom must be < 1000; values > 30 "
+                    "will give results very similar to a Gaussian mixture, "
+                    "values as large as the one you have entered are indistinguishable "
+                    "from a Gaussian mixture. DF = 4 is suggested as a good default.")
 
     #Function for fitting a model using the parameters the user
     #selected when creating the model object.
@@ -71,9 +89,12 @@ class StudentTMixture():
         self.initialize_params(X)
         lower_bound = -np.inf
         for i in range(self.max_iter):
-            resp, z, current_bound = self.Estep(X)
+            resp, z, logprobs = self.Estep(X)
+            current_bound = self.get_lower_bound(X, logprobs)
             self.Mstep(X, resp, z)
-            change = current_bound - lower_bound
+            change = lower_bound - current_bound
+            if change < 0:
+                print("%s          %s"%(current_bound, lower_bound))
             if abs(change) < self.tol:
                 self.converged_ = True
                 break
@@ -82,16 +103,16 @@ class StudentTMixture():
             print("Fit did not converge! Try increasing max_iter or tol or check "
                 "data for possible issues.")
 
-
+    #The e-step in mixture fitting. Calculates responsibilities for each datapoint
+    #and the lower bound.
     def Estep(self, X):
         maha_dist = self.maha_distance(X)
         logprobs = self.get_log_prob(X, maha_dist)
         logprob_norm = logsumexp(logprobs, axis=1)
         with np.errstate(under="ignore"):
             logprobs = logprobs - logprob_norm[:,np.newaxis]
-        z = (self.df_ + X.shape[1])[np.newaxis,:]
-        z = z / (self.df_[np.newaxis,:] + maha_dist)
-        return np.exp(logprobs), z, np.mean(logprob_norm)
+        z = (self.df_ + X.shape[1]) / (self.df_ + maha_dist)
+        return np.exp(logprobs), z, logprobs
 
 
     def Mstep(self, X, resp, z):
@@ -106,48 +127,22 @@ class StudentTMixture():
                             scaled_x) / resp_sum[i]
             self.scale_[:,:,i].flat[::X.shape[1] + 1] += self.reg_covar
             self.scale_cholesky_[:,:,i] = cholesky(self.scale_[:,:,i], lower=True)
-        if self.fixed_df is None:
-            self.update_df(X, resp, z)
-
-
-    def get_lower_bound(self, logprobs, resp):
-        weight_term = resp*np.log(self.mix_weights_[np.newaxis,:])
-        prob_term = resp*logprobs
-        return np.sum(prob_term + weight_term)
-
-
-    def update_df(self, X, resp, z):
-        for i in range(self.n_components):
-            low_end = self.actual_loglik_df(1, resp, z, i)
-            high_end = self.actual_loglik_df(250, resp, z, i)
-            if np.sign(low_end) == np.sign(high_end):
-                self.df_[i] = 250
-            elif low_end >= 0 and high_end >= 0:
-                self.df_[i] = 250
-            else:
-                sol = root_scalar(self.actual_loglik_df, args=(resp, z, i), 
-                    method="brentq", bracket=[1,250])
-                if sol.converged:
-                    self.df_[i] = sol.root
-
-
-    def actual_loglik_df(self, nu, resp, z, comp_num):
-        result = -digamma(nu*0.5) + np.log(nu*0.5)
-        result += (1/np.sum(resp[:,comp_num])) * np.sum(resp[:,comp_num]*
-                (np.log(z[:,comp_num]) - z[:,comp_num]))
-        result += 1 + digamma(0.5*(nu+resp.shape[1])) - np.log(0.5*(nu+resp.shape[1]))
-        return result
-
-
+        self.get_scale_inv_cholesky()
 
     def maha_distance(self, X):
         maha_dist = []
         for i in range(self.n_components):
-            y = X - self.loc_[i,:][np.newaxis,:]
-            y = solve_triangular(self.scale_cholesky_[:,:,i], y.T).T
+            y = np.dot(X, self.scale_inv_cholesky_[:,:,i])
+            y -= np.dot(self.loc_[i,:], self.scale_inv_cholesky_[:,:,i])[np.newaxis,:]
             maha_dist.append(np.sum(y**2, axis=1))
         return np.stack(maha_dist, axis=-1)
 
+    #Gets the inverse of the cholesky decomposition of the scale matrix,
+    #(don't use np.linalg.inv! triangular_solver is better)
+    def get_scale_inv_cholesky(self):
+        for i in range(self.n_components):
+            self.scale_inv_cholesky_[:,:,i] = solve_triangular(self.scale_cholesky_[:,:,i].T,
+                    np.eye(self.scale_cholesky_.shape[0]), lower=True).T
 
     #We initialize parameters using a modified kmeans++ algorithm, whereby
     #cluster centers are chosen and each datapoint is given a hard
@@ -173,27 +168,29 @@ class StudentTMixture():
         self.scale_ = [np.eye(X.shape[1]) for i in range(self.n_components)]
         self.scale_ = np.stack(self.scale_, axis=-1)
         self.scale_cholesky_ = np.copy(self.scale_)
-        self.df_ = np.empty(self.n_components)
-        #If the user does not supply a fixed df, start with an arbitrary
-        #large value, then find better values during fitting.
-        if self.fixed_df is not None:
-            self.df_.fill(self.fixed_df)
-        else:
-            self.df_.fill(50.0)
+        self.scale_inv_cholesky_ = np.copy(self.scale_)
 
-
+    #Lower bound on the log likelihood.
     def get_log_prob(self, X, precalc_dist = None):
         if precalc_dist is None:
-            maha_dist = 1 + self.maha_distance(X) / self.df_[np.newaxis,:]
+            maha_dist = 1 + self.maha_distance(X) / self.df_
         else:
-            maha_dist = 1 + precalc_dist / self.df_[np.newaxis,:]
-        maha_dist = -0.5*(self.df_ + X.shape[1])[np.newaxis,:]*np.log(maha_dist)
+            maha_dist = 1 + precalc_dist / self.df_
+        maha_dist = -0.5*(self.df_ + X.shape[1])*np.log(maha_dist)
         const_term = gammaln(0.5*(self.df_ + X.shape[1])) - gammaln(0.5*self.df_)
         const_term -= 0.5*X.shape[1]*(np.log(self.df_) + np.log(np.pi))
         scale_det = [np.sum(np.log(np.diag(self.scale_cholesky_[:,:,i])))
                         for i in range(self.n_components)]
         scale_det = -np.asarray(scale_det)
-        return scale_det[np.newaxis,:] + const_term[np.newaxis,:] + maha_dist + np.log(self.mix_weights_[np.newaxis,:])
+        return scale_det[np.newaxis,:] + const_term + maha_dist + np.log(self.mix_weights_[np.newaxis,:])
+
+
+    def get_lower_bound(self, X, precalc_logprob=None):
+        logprob = precalc_logprob
+        if logprob is None:
+            logprob = self.get_log_prob(X)
+        loglik = logprob*self.mix_weights_[np.newaxis,:]
+        return np.mean(loglik)
 
 
     def predict(self, X):
@@ -210,16 +207,18 @@ class StudentTMixture():
     def sample(self, n_samples):
         self.check_model()
 
-
+    #Returns the average log likelihood (i.e. averaged over all datapoints).
     def score(self, X):
-        pass
-
-
+        self.check_inputs(X)
+        return np.mean(self.get_log_prob(X))
+        
+    #Simultaneously fits and makes predictions for the input dataset.
     def fit_predict(self, X):
         self.fit(X)
         return self.predict(X)
 
-
+    #A handy function for toy 2d datasets -- generates coordinates for
+    #elipses describing each t-distribution in the mixture.
     def get_ellipses(self, mag_factor=1):
         if self.scale_[:,:,0].shape[0] > 2:
             raise ValueError("This function will only generate elipse coordinates for "
@@ -236,10 +235,23 @@ class StudentTMixture():
             eigvals.append(val)
             eigvecs.append(vec)
             
-
+    #Returns the Akaike information criterion (AIC) for the input dataset.
+    #Useful in selecting the number of components.
     def aic(self, X):
-        pass
+        self.check_inputs(X)
+        #Note that we treat each component as having two parameters since df is
+        #fixed.
+        n_params = 2*self.n_components
+        loglik = np.sum(self.get_log_prob(X))
+        return 2*n_params - 2*loglik
 
-
+    #Returns the Bayes information criterion (BIC) for the input dataset.
+    #Useful in selecting the number of components, more heavily penalizes
+    #n_components than AIC.
     def bic(self, X):
-        pass
+        self.check_inputs(X)
+        #Note that we treat each component as having two parameters since df is
+        #fixed.
+        n_params = 2*self.n_components
+        loglik = np.sum(self.get_log_prob(X))
+        return n_params*np.log(n_params) - 2*loglik
