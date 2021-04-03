@@ -7,7 +7,7 @@ from mixt_core import StudentMixtureModelCore
 
 class StudentMixture():
 
-    def __init__(self, n_components = 2, tol=1e-5,
+    def __init__(self, n_components = 2, tol=1e-3,
             reg_covar=1e-06, max_iter=500, n_init=1,
             df = None, random_state=123, verbose=True):
         self.check_user_params(n_components, tol, reg_covar, max_iter, n_init, df, random_state)
@@ -114,22 +114,26 @@ class StudentMixture():
     def fit(self, X):
         x = self.check_fitting_data(X)
         best_lower_bound = -np.inf
-        best_model = None
+        self.model_core = None
+        model_cores = []
         for i in range(self.n_init):
             #Increment random state so that each random initialization is different from the
             #rest but so that the overall chain is reproducible.
             model_core = StudentMixtureModelCore(self.random_state + i)
             lower_bound = model_core.fit(x, self.df_, self.tol, 
                     self.n_components, self.reg_covar, self.max_iter, self.verbose)
+            model_cores.append(model_core)
+            if self.verbose:
+                print("Restart %s now complete"%i)
             if model_core.check_modelcore_convergence() == False:
                 print("Restart %s did not converge!"%(i+1))
             elif lower_bound > best_lower_bound:
                 self.model_core = model_core
                 best_lower_bound = lower_bound
-        if best_model is None:
+        if self.model_core is None:
             print("The model did not converge on any of the restarts! Try increasing max_iter or "
                         "tol or check data for possible issues.")
-            self.model_core = None
+        return model_cores
 
 
     #Returns a categorical component assignment for each sample in the input.
@@ -178,7 +182,7 @@ class StudentMixture():
     #Gets the mixture weights for a fitted model.
     def get_weights(self):
         self.check_model()
-        return self.model_core.mix_weights_
+        return self.model_core.get_mix_weights()
 
 
     #Returns the Akaike information criterion (AIC) for the input dataset.

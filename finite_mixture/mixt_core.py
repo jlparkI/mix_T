@@ -45,7 +45,8 @@ class StudentMixtureModelCore():
                 break
             lower_bound = current_bound
             if verbose:
-                print(current_bound)
+                #print("Current bound: %s"%current_bound)
+                print("Change: %s"%change)
         return current_bound
 
 
@@ -57,15 +58,12 @@ class StudentMixtureModelCore():
     def Estep(self, X):
         maha_dist = self.maha_distance(X)
         loglik = self.get_loglik(X, maha_dist)
-        current_bound = loglik + np.log(np.clip(self.mix_weights_, a_min=1e-9, a_max=None))
-        current_bound = np.mean(logsumexp(current_bound, axis=1))
-        b = np.max(loglik, axis=1)
-        loglik = loglik - b[:,np.newaxis]
+        weighted_log_prob = loglik + np.log(np.clip(self.mix_weights_, a_min=1e-9, a_max=None))
+        log_prob_norm = logsumexp(weighted_log_prob, axis=1)
         with np.errstate(under="ignore"):
-            probs = self.mix_weights_ * np.exp(loglik - b[:,np.newaxis])
-            probs = probs / np.sum(probs, axis=1)[:,np.newaxis]
+            resp = np.exp(weighted_log_prob - log_prob_norm[:, np.newaxis])
         u = (self.df_[np.newaxis,:] + X.shape[1]) / (self.df_[np.newaxis,:] + maha_dist)
-        return probs, u, maha_dist, current_bound
+        return resp, u, maha_dist, np.mean(log_prob_norm)
 
     #The M-step in mixture fitting. Calculates the ML value for the scale matrix
     #location and mixture weights (we are using fixed df, otherwise df would also
