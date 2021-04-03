@@ -124,38 +124,33 @@ class StudentMixture():
             if model_core.check_modelcore_convergence() == False:
                 print("Restart %s did not converge!"%(i+1))
             elif lower_bound > best_lower_bound:
-                best_model = model_core
+                self.model_core = model_core
                 best_lower_bound = lower_bound
-            if best_model is None:
-                print("The model did not converge on any of the restarts! Try increasing max_iter or "
+        if best_model is None:
+            print("The model did not converge on any of the restarts! Try increasing max_iter or "
                         "tol or check data for possible issues.")
-                self.model_core = None
-            else:
-                self.model_core = best_model
+            self.model_core = None
 
 
-
+    #Returns
     def predict(self, X):
         probs = self.predict_proba(x)
         return np.argmax(probs, axis=1)
 
-
+    #Returns the probability that each sample belongs to each component.
     def predict_proba(self, X):
         self.check_model()
         x = self.check_inputs(X)
-        logprob = self.get_logprob_tdist(x)
-        logprob = logprob - logsumexp(logprob, axis=1)[:,np.newaxis]
-        return np.exp(logprob)
-
-
-    def sample(self, n_samples):
-        self.check_model()
+        probs = self.model_core.get_component_probabilities(x)
+        return probs
 
 
     #Returns the average log likelihood (i.e. averaged over all datapoints).
-    def score(self, X):
-        self.check_model()
-        self.check_inputs(X)
+    def score(self, X, run_model_checks=True):
+        if run_model_checks:
+            self.check_model()
+            X = self.check_inputs(X)
+        return self.model_core.score(X)
         
     #Simultaneously fits and makes predictions for the input dataset.
     def fit_predict(self, X):
@@ -173,20 +168,21 @@ class StudentMixture():
         return self.model_core.get_scale()
 
 
-            
     #Returns the Akaike information criterion (AIC) for the input dataset.
     #Useful in selecting the number of components.
     def aic(self, X):
         self.check_model()
-        self.check_inputs(X)
-        #Note that we treat each component as having two parameters if df is fixed.
+        x = self.check_inputs(X)
         n_params = self.model_core.get_num_parameters()
-        score = self.score(X)
-        return 2*n_params - 2*score
+        score = self.score(x, run_model_checks = False)
+        return 2 * n_params - 2 * score * X.shape[0]
 
     #Returns the Bayes information criterion (BIC) for the input dataset.
     #Useful in selecting the number of components, more heavily penalizes
     #n_components than AIC.
     def bic(self, X):
         self.check_model()
-        self.check_inputs(X)
+        x = self.check_inputs(X)
+        score = self.score(x, run_model_checks = False)
+        n_params = self.model_core.get_num_parameters()
+        return 2 * n_params * np.log(x.shape[0]) - 2 * score * x.shape[0]

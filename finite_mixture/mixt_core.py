@@ -153,28 +153,31 @@ class StudentMixtureModelCore():
         scale_logdet = np.asarray(scale_logdet)
         loglik = -scale_logdet[np.newaxis,:] + const_term + maha_dist
         return loglik
-        
 
-    #Gets the inverse of the cholesky decomposition of the scale matrix,
-    #(don't use np.linalg.inv!)
+
+    #Returns log p(X | theta) + log mix_weights.
+    def get_weighted_loglik(self, X, precalc_dist=None):
+        loglik = self.get_loglik(X, precalc_dist)
+        return loglik + np.log(self.mix_weights_)[np.newaxis,:]
+
+    #Returns the probability that the input data belongs to each component. Used
+    #for making predictions.
+    def get_component_probability(self, X):
+        weighted_loglik = self.get_weighted_loglik(X)
+        with np.errstate(under="ignore"):
+            loglik = weighted_loglik - logsumexp(weighted_loglik, axis=1)[:,np.newaxis]
+        return np.exp(loglik)
+
+    #Gets a per sample average log likelihood (useful for AIC, BIC).
+    def score(self, X):
+        net_score = logsumexp(self.get_weighted_loglik(X), axis=1)
+        return np.mean(net_score)
+
+    #Gets the inverse of the cholesky decomposition of the scale matrix.
     def get_scale_inv_cholesky(self):
         for i in range(self.mix_weights_.shape[0]):
             self.scale_inv_cholesky_[:,:,i] = solve_triangular(self.scale_cholesky_[:,:,i],
                     np.eye(self.scale_cholesky_.shape[0]), lower=True).T
-
-    
-    #Gets the Jensen's inequality lower bound on the log likelihood.
-    #Only used during training.
-    def get_loglik_lower_bound(self, X, resp, u, maha_dist, scale_logdet):
-        lower_bound = np.log(np.clip(self.mix_weights_, a_min=1e-12, a_max=None))
-        lower_bound -= 0.5 * X.shape[1] * np.log(2*np.pi)
-        lower_bound = lower_bound[np.newaxis,:] - scale_logdet - 0.5 * u * maha_dist
-        lower_bound += 0.5 * self.df_ * np.log(self.df_ * 0.5)
-        lower_bound += gammaln(self.df_ * 0.5)
-        lower_bound += 0.5 * self.df_ * (np.log(u) - u) - np.log(u)
-        lower_bound = resp * lower_bound - np.log(np.clip(resp, a_min=1e-12, a_max=None))
-        return np.sum(lower_bound)
-    
 
     #We initialize parameters using a modified kmeans++ algorithm, whereby
     #cluster centers are chosen and each datapoint is given a hard
@@ -218,8 +221,12 @@ class StudentMixtureModelCore():
     def get_scale(self):
         return self.scale_
 
-    #Gets the number of parameters (useful for AIC & BIC calculations).
+    #Gets the number of parameters (useful for AIC & BIC calculations). Note that df is only
+    #treated as a parameter if df is not fixed.
     def get_num_parameters(self):
-        num_parameters = self.mix_weights_.shape[0] * self.loc.shape[1]
-        num_parameters = num_parameters * (self.loc.shape[1] + 1) / 2
-        return num_parameters
+        num_parameters = self.mix_weights_.shape[0] + self.loc_.shape[0] * self.loc_.shape[1]
+        num_parameters += 0.5 * self.scale_.shape[0] * (self.scale_.shape[1] + 1) * self.scale_.shape[2]
+        if self.fixed_df:
+            return num_parameters
+        else:
+            return num_parameters + self.df_.shape[0]
