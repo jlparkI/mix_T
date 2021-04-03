@@ -168,10 +168,13 @@ class StudentMixtureModelCore():
             loglik = weighted_loglik - logsumexp(weighted_loglik, axis=1)[:,np.newaxis]
         return np.exp(loglik)
 
-    #Gets a per sample average log likelihood (useful for AIC, BIC).
+    #Gets an average (over samples) log likelihood (useful for AIC, BIC).
     def score(self, X):
-        net_score = logsumexp(self.get_weighted_loglik(X), axis=1)
-        return np.mean(net_score)
+        return np.mean(self.score_samples(X))
+
+    #Gets a per sample net log likelihood.
+    def score_samples(self, X):
+        return logsumexp(self.get_weighted_loglik(X), axis=1)
 
     #Gets the inverse of the cholesky decomposition of the scale matrix.
     def get_scale_inv_cholesky(self):
@@ -220,6 +223,10 @@ class StudentMixtureModelCore():
     #Returns the model scale matrices.
     def get_scale(self):
         return self.scale_
+
+    #Returns the mixture weights.
+    def get_mix_weights(self):
+        return self.mix_weights_
 
     #Gets the number of parameters (useful for AIC & BIC calculations). Note that df is only
     #treated as a parameter if df is not fixed.

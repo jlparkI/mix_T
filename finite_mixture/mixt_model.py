@@ -132,7 +132,7 @@ class StudentMixture():
             self.model_core = None
 
 
-    #Returns
+    #Returns a categorical component assignment for each sample in the input.
     def predict(self, X):
         probs = self.predict_proba(x)
         return np.argmax(probs, axis=1)
@@ -151,6 +151,14 @@ class StudentMixture():
             self.check_model()
             X = self.check_inputs(X)
         return self.model_core.score(X)
+
+    #Returns the per sample log likelihood. Useful if fitting a class conditional classifier
+    #with a mixture for each class.
+    def score_samples(self, X, run_model_checks=True):
+        if run_model_checks:
+            self.check_model()
+            X = self.check_inputs(X)
+        return self.model_core.score_samples(X)
         
     #Simultaneously fits and makes predictions for the input dataset.
     def fit_predict(self, X):
@@ -166,6 +174,11 @@ class StudentMixture():
     def get_cluster_scales(self):
         self.check_model()
         return self.model_core.get_scale()
+
+    #Gets the mixture weights for a fitted model.
+    def get_weights(self):
+        self.check_model()
+        return self.model_core.mix_weights_
 
 
     #Returns the Akaike information criterion (AIC) for the input dataset.
