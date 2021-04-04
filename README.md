@@ -1,7 +1,15 @@
 # mix_T
-Scipy and sklearn do not at present have any resources for fitting multivariate Student t-distributions or mixtures thereof, even though these are widely used for modeling heavy-tailed data. This package (in progress, finished soon) will provide classes for:
 
-1) fitting a dataset to a finite mixture of multivariate Student T distributions 
-with a scikit-learn-like interface and calculating key statistics (BIC, AIC etc.);
-2) fitting a dataset to a mixture of multivariate Student T distributions using
-a variational approximation.
+Mixtures of multivariate Student's T distributions are widely used for clustering
+data that may contain outliers, but scipy and scikit-learn do not at present
+offer classes for fitting Student's T mixtures. This package provides classes
+for:
+
+1) Modeling / clustering a dataset using a finite mixture of multivariate Student's
+t distributions;
+2) Modeling / clustering a dataset using an infinite mixture of Student's t-
+distributions (a Dirichlet process; fit using a variational approximation).
+
+(1) is available in version 0.0.1, (2) will come in version 0.0.2.
+
+[Installation](https://github.com/jlparki/)

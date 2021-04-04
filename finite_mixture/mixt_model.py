@@ -9,13 +9,11 @@ class StudentMixture():
 
     def __init__(self, n_components = 2, tol=1e-3,
             reg_covar=1e-06, max_iter=500, n_init=1,
-            df = None, random_state=123, verbose=True):
+            df = 4.0, fixed_df = True, random_state=123, verbose=True):
         self.check_user_params(n_components, tol, reg_covar, max_iter, n_init, df, random_state)
         #General model parameters specified by user.
-        if df is not None:
-            self.df_ = float(df)
-        else:
-            self.df_ = None
+        self.start_df_ = float(df)
+        self.fixed_df = fixed_df
         self.n_components = n_components
         self.tol = tol
         self.reg_covar = reg_covar
@@ -40,12 +38,12 @@ class StudentMixture():
             reg_covar = float(reg_covar)
         except:
             raise ValueError("n_components, tol, max_iter, n_init, reg_covar and random state should be numeric.")
-        if df is not None:
-            if df > 1000:
-                raise ValueError("If degrees of freedom is not specified, it will be determined "
-                    "automatically. If it IS specified, it must be < 1000; "
-                    "very large values will give results essentially identical to a Gaussian mixture."
-                    "DF = 4 is suggested as a good default.")
+        if df > 1000:
+            raise ValueError("Very large values for dof will give results essentially identical to a Gaussian mixture."
+                    "DF = 4 is suggested as a good default. If fixed_df is False, the df will be "
+                             "optimized.")
+        if df < 1:
+            raise ValueError("Inappropriate starting value for df!")
         if max_iter < 1:
             raise ValueError("Inappropriate value for the maximum number of iterations! Must be >= 1.")
         if n_init < 1:
@@ -119,8 +117,8 @@ class StudentMixture():
         for i in range(self.n_init):
             #Increment random state so that each random initialization is different from the
             #rest but so that the overall chain is reproducible.
-            model_core = StudentMixtureModelCore(self.random_state + i)
-            lower_bound = model_core.fit(x, self.df_, self.tol, 
+            model_core = StudentMixtureModelCore(self.random_state + i, self.fixed_df)
+            lower_bound = model_core.fit(x, self.start_df_, self.tol,
                     self.n_components, self.reg_covar, self.max_iter, self.verbose)
             model_cores.append(model_core)
             if self.verbose:

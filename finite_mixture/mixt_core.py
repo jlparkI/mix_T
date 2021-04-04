@@ -11,7 +11,7 @@ from scipy.optimize import newton
 #and save the best one.
 class StudentMixtureModelCore():
 
-    def __init__(self, random_state):
+    def __init__(self, random_state, fixed_df):
         self.mix_weights_ = None
         self.loc_ = None
         self.scale_ = None
@@ -20,7 +20,7 @@ class StudentMixtureModelCore():
         self.converged_ = False
         self.n_iter_ = 0
         self.df_ = None
-        self.fixed_df = True
+        self.fixed_df = fixed_df
         self.random_state = random_state
 
 
@@ -28,12 +28,8 @@ class StudentMixtureModelCore():
     #fitting parameters (df, n_components, max_iter etc) are stored in and 
     #supplied by the mixt_model class and passed to its model core when it does a
     #fit.
-    def fit(self, X, df, tol, n_components, reg_covar, max_iter, verbose):
-        if df is None:
-            self.fixed_df = False
-            self.df_ = np.full((n_components), 4.0, dtype=np.float64)
-        else:
-            self.df_ = np.full((n_components), df, dtype=np.float64)
+    def fit(self, X, start_df, tol, n_components, reg_covar, max_iter, verbose):
+        self.df_ = np.full((n_components), start_df, dtype=np.float64)
         self.initialize_params(X, n_components)
         lower_bound = -np.inf
         for i in range(max_iter):
@@ -45,8 +41,8 @@ class StudentMixtureModelCore():
                 break
             lower_bound = current_bound
             if verbose:
-                #print("Current bound: %s"%current_bound)
-                print("Change: %s"%change)
+                print("Change in lower bound: %s"%change)
+                print("Actual lower bound: %s" % current_bound)
         return current_bound
 
 
@@ -58,7 +54,8 @@ class StudentMixtureModelCore():
     def Estep(self, X):
         maha_dist = self.maha_distance(X)
         loglik = self.get_loglik(X, maha_dist)
-        weighted_log_prob = loglik + np.log(np.clip(self.mix_weights_, a_min=1e-9, a_max=None))
+        weighted_log_prob = loglik + np.log(np.clip(self.mix_weights_,
+                                        a_min=1e-9, a_max=None))[np.newaxis,:]
         log_prob_norm = logsumexp(weighted_log_prob, axis=1)
         with np.errstate(under="ignore"):
             resp = np.exp(weighted_log_prob - log_prob_norm[:, np.newaxis])
@@ -97,8 +94,6 @@ class StudentMixtureModelCore():
     #Optimizes the df parameter using Newton Raphson.
     def optimize_df(self, X, resp, u):
         for i in range(self.mix_weights_.shape[0]):
-            #import pdb
-            #pdb.set_trace()
             self.df_[i] = newton(self.dof_first_deriv, x0 = self.df_[i],
                                  fprime = self.dof_second_deriv,
                                  fprime2 = self.dof_third_deriv,
@@ -149,8 +144,7 @@ class StudentMixtureModelCore():
         scale_logdet = [np.sum(np.log(np.diag(self.scale_cholesky_[:,:,i])))
                         for i in range(self.mix_weights_.shape[0])]
         scale_logdet = np.asarray(scale_logdet)
-        loglik = -scale_logdet[np.newaxis,:] + const_term + maha_dist
-        return loglik
+        return -scale_logdet[np.newaxis,:] + const_term[np.newaxis,:] + maha_dist
 
 
     #Returns log p(X | theta) + log mix_weights.
