@@ -178,6 +178,10 @@ class FiniteStudentMixture():
         self.check_model()
         return self.model_core.get_mix_weights()
 
+    #Gets the degrees of freedom for the fitted mixture model.
+    def get_df(self):
+        self.check_model()
+        return self.model_core.get_df()
 
     #Returns the Akaike information criterion (AIC) for the input dataset.
     #Useful in selecting the number of components.

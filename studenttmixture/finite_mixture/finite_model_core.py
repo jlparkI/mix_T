@@ -219,6 +219,10 @@ class FiniteModelCore():
     #Returns the mixture weights.
     def get_mix_weights(self):
         return self.mix_weights_
+    
+    #Returns the mixture df.
+    def get_df(self):
+        return self.df_
 
     #Gets the number of parameters (useful for AIC & BIC calculations). Note that df is only
     #treated as a parameter if df is not fixed.
