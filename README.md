@@ -1,4 +1,4 @@
-# mix_T
+# studenttmixture
 
 Mixtures of multivariate Student's t distributions are widely used for clustering
 data that may contain outliers, but scipy and scikit-learn do not at present
@@ -10,7 +10,7 @@ t distributions;
 2) Modeling / clustering a dataset using an infinite mixture of Student's t-
 distributions (a Dirichlet process; fit using a variational approximation).
 
-(1) is available in version 0.0.1, (2) will come in version 0.0.2.
+(1) is available in version 0.0.1.1, (2) will come in version 0.0.2.
 
 ### Installation
 
