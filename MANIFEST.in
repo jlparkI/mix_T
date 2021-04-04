@@ -1,0 +1,5 @@
+exclude Documentation/Finite_Mixture_Docs.md
+exclude Documentation/Tutorial.md
+exclude Documentation/Variational_Mixture_Docs.md
+exclude c_cython_version/cython_setup.py
+exclude c_cython_version/mixt_core.pyx
