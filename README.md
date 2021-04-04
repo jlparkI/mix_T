@@ -16,6 +16,9 @@ distributions (a Dirichlet process; fit using a variational approximation).
 
     pip install studenttmixture
 
-[Installation](https://github.com/jlparki/)
+### Usage
 
+[FiniteStudentMixture](https://github.com/jlparkI/mix_T/blob/main/Documentation/Finite_Mixture_Docs.md)
+[VariationalStudentMixture (coming soon)](https://github.com/jlparkI/mix_T/blob/main/Documentation/Variational_Mixture_Docs.md)
+[Student's T mixture modeling user guide](https://github.com/jlparkI/mix_T/blob/main/Documentation/Tutorial.md)
 

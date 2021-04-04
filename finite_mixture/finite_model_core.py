@@ -9,7 +9,7 @@ from scipy.optimize import newton
 #the fitted model before placing any calls to the model core. When fitting with
 #multiple restarts, the StudentMixture class can create more than one model core
 #and save the best one.
-class StudentMixtureModelCore():
+class FiniteModelCore():
 
     def __init__(self, random_state, fixed_df):
         self.mix_weights_ = None
@@ -80,7 +80,7 @@ class StudentMixtureModelCore():
             self.scale_[:,:,i] = np.dot((ru[:,i:i+1] * scaled_x).T,
                             scaled_x) / resp_sum[i]
             self.scale_[:,:,i].flat[::X.shape[1] + 1] += reg_covar
-            self.scale_cholesky_[:,:,i] = cholesky(self.scale_[:,:,i], lower=True)
+            self.scale_cholesky_[:,:,i] = np.linalg.cholesky(self.scale_[:,:,i])
         #For mahalanobis distance we really need the cholesky decomposition of
         #the precision matrix (inverse of scale), but do not want to take 
         #the inverse directly to avoid possible numerical stability issues.

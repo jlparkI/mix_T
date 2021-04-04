@@ -1,15 +1,12 @@
-import numpy as np, random
-import mixt_core
-from importlib import reload
-reload(mixt_core)
-from mixt_core import StudentMixtureModelCore 
+import numpy as np
+from .finite_model_core import FiniteModelCore 
 
 
-class StudentMixture():
+class FiniteStudentMixture():
 
     def __init__(self, n_components = 2, tol=1e-3,
             reg_covar=1e-06, max_iter=500, n_init=1,
-            df = 4.0, fixed_df = True, random_state=123, verbose=True):
+            df = 4.0, fixed_df = True, random_state=123, verbose=False):
         self.check_user_params(n_components, tol, reg_covar, max_iter, n_init, df, random_state)
         #General model parameters specified by user.
         self.start_df_ = float(df)
@@ -117,7 +114,7 @@ class StudentMixture():
         for i in range(self.n_init):
             #Increment random state so that each random initialization is different from the
             #rest but so that the overall chain is reproducible.
-            model_core = StudentMixtureModelCore(self.random_state + i, self.fixed_df)
+            model_core = FiniteModelCore(self.random_state + i, self.fixed_df)
             lower_bound = model_core.fit(x, self.start_df_, self.tol,
                     self.n_components, self.reg_covar, self.max_iter, self.verbose)
             model_cores.append(model_core)
@@ -131,7 +128,6 @@ class StudentMixture():
         if self.model_core is None:
             print("The model did not converge on any of the restarts! Try increasing max_iter or "
                         "tol or check data for possible issues.")
-        return model_cores
 
 
     #Returns a categorical component assignment for each sample in the input.
