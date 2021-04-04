@@ -1,1 +1,1 @@
-import finite_mixture
+from studenttmixture import finite_mixture
