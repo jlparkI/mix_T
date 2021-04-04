@@ -93,7 +93,7 @@ class FiniteStudentMixture():
             x = X.reshape(-1,1)
         else:
             x = X
-        if x.shape[0] <= 2*X.shape[1]:
+        if x.shape[0] <= 2*x.shape[1]:
             raise ValueError("Too few datapoints for dataset "
             "dimensionality. You should have at least 2 datapoints per "
             "dimension (preferably more).")
