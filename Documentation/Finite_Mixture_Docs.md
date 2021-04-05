@@ -99,4 +99,36 @@ so all clusters will have the same df in that case.
 
 #### Example
 
+```python
+#This is a fairly easy clustering problem with well-separated clusters
+#(in other words, unlike any real-world dataset!) However, a Gaussian
+#mixture performs much worse than a studenttmixture just because
+#of a handful of scattered outliers, demonstrating the advantages
+#of clustering using a mixture of t-distributions.
 
+import studenttmixture
+from studenttmixture.finite_mixture import FiniteStudentMixture
+import matplotlib.pyplot as plt, numpy as np
+
+#Note that scikit-learn is not a dependency and is not
+#required for studenttmixture; we're only using it here to get
+#some convenient toy datasets to demonstrate use of this package, and
+#to compare the results of a Gaussian mixture model with a 
+#studenttmixture.
+import sklearn
+from sklearn.datasets import make_blobs
+
+#We generate a dataset with 3 blobs and some randomly scattered 
+#outlier points.
+x_clusters, y, centers = make_blobs(n_samples=100, 
+                           return_centers=True, random_state=128)
+np.random.seed(123)
+x_noise = np.random.uniform(low=3*np.min(x_clusters), 
+                            high=3*np.max(x_clusters),
+                           size=(10,2))
+x = np.vstack([x_clusters, x_noise])
+plt.scatter(x[:,0], x[:,1], s=10)
+plt.title("Unclustered data")
+plt.show()
+```
+![](

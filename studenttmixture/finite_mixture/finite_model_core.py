@@ -1,4 +1,4 @@
-import numpy as np
+import numpy as np, math
 from scipy.linalg import solve_triangular
 from scipy.special import gammaln, logsumexp, digamma, polygamma
 from scipy.optimize import newton
@@ -99,6 +99,13 @@ class FiniteModelCore():
                                  fprime2 = self.dof_third_deriv,
                                  args = (u, resp, X.shape[1], i),
                                  full_output = False, disp=False, tol=1e-3)
+            #It may occasionally happen that newton does not converge.
+            #If so, reset to the default value for this iteration.
+            if math.isnan(self.df_[i]):
+                self.df_[i] = 4.0
+            #DF should never be less than 1 but can go arbitrarily high.
+            if self.df_[i] < 1:
+                self.df_[i] = 1.0
 
     # First derivative of the complete data log likelihood w/r/t df.
     def dof_first_deriv(self, dof, u, resp, dim, i):
