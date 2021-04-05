@@ -131,4 +131,54 @@ plt.scatter(x[:,0], x[:,1], s=10)
 plt.title("Unclustered data")
 plt.show()
 ```
-![](
+![raw_data](https://github.com/jlparkI/mix_T/blob/main/Documentation/Unclustered_data.png)
+
+```python
+#We choose the number of clusters using information criteria. Notice that when doing many different fits
+#as in this case with different numbers of clusters (some of which are highly non-optimal) 
+#it is often better to use fixed_df with a low value. 
+#We can optimize df later once we have selected the number of clusters.
+aics, bics = [], []
+for ncomp in range(2,10):
+    mix_model = FiniteStudentMixture(n_components=ncomp, fixed_df=True, df=1.0)
+    mix_model.fit(x)
+    aics.append(mix_model.aic(x))
+    bics.append(mix_model.bic(x))
+
+plt.scatter(np.arange(2, 10), aics, color="red", label="AIC")
+plt.scatter(np.arange(2,10), bics, color="blue", label="BIC")
+plt.title("Information criteria vs number of clusters for toy dataset")
+plt.xlabel("Num clusters")
+#Consistent with expectations (in this case), we see an "elbow" for AIC and a clear minimum for BIC at
+#3 clusters. The absolute value of these information criteria is not important, the location of the "elbow"
+#or minimum is. Note that BIC discriminates much more heavily against models with more parameters.
+```
+![bic_aic](https://github.com/jlparkI/mix_T/blob/main/Documentation/AIC_BIC.png)
+
+```python
+#We fit both scikitlearn's Gaussian mixture and the FiniteStudentMixture using 3 clusters and 
+#compare the results.
+from sklearn.mixture import GaussianMixture as GMM
+gm = GMM(n_components=3, n_init=5, random_state=11)
+stm = FiniteStudentMixture(n_components=3, n_init=5, fixed_df=False, df=1, random_state=11)
+gm.fit(x)
+stm.fit(x)
+plt.scatter(x[:,0], x[:,1], s=10, label="raw data")
+stm_clusters = stm.get_cluster_centers()
+plt.scatter(gm.means_[:,0], gm.means_[:,1], color="red", marker="*", 
+                label="Gaussian mixture", alpha=0.5, s=100)
+plt.scatter(stm_clusters[:,0], stm_clusters[:,1], color="black", marker="X",
+               label="Student's t-mixture", s=100)
+    
+plt.legend()
+
+#Notice that the Gaussian mixture model behaves unpredictably and erratically in the presence
+#of outliers, even on a very simple toy dataset. A Student's t-mixture, by contrast, performs
+#just fine. Obviously, real-world datasets pose additional challenges not explored here, and
+#in many cases other clustering techniques may be more suitable, but the point is that
+#a Student's t-mixture is often a more appropriate technique than a Gaussian mixture.
+#In the best case scenario, it will beat the Gaussian mixture by a substantial margin;
+#worst case, it may give you similar results.
+```
+![comparison](https://github.com/jlparkI/mix_T/blob/main/Documentation/STM_vs_GMM.png)
+
