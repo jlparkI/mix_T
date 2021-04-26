@@ -15,7 +15,7 @@ a toy dataset where k-means will perform very badly. Hierarchical clustering is 
 small datasets but its O(N^2) scaling makes it impractical for larger datasets. Density-based
 clustering (aka DBSCAN) is in principle very powerful but in practice is highly sensitive to choice
 of hyperparameters, and spectral clustering is too computationally expensive for routine use.
-<br>
+<br><br>
 Like all these other techniques, mixture models have advantages and disadvantages and are only optimal
 for certain kinds of problems. The most common mixture model is the Gaussian mixture,
 which assumes all clusters are approximately normal distributions. The number of components can 
@@ -24,7 +24,7 @@ or by fitting an infinite mixture (Dirichlet process) model fit using a variatio
 approximation; this approach automatically selects the number of
 clusters most appropriate given the data and a user-specified prior. Gaussian mixtures scale
 well with number of datapoints although exhibit cubic scaling with increasing dimensionality.
-<br>
+<br><br>
 The assumption that all clusters are normal distributions might seem arbitrary and fairly problematic.
 One does however encounter a fair number of datasets where this assumption is approximately true or
 at least reasonable, and hence a Gaussian mixture is sometimes a useful approach. Its usefulness,
