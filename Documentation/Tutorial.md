@@ -45,8 +45,12 @@ a mixture of Student's t-distributions. This package provides classes for fittin
 
 # FiniteMixtures
 
-Documentation not added yet; coming soon.
+A finite mixture of Student's t-distributions is described by the following formula:
+
+![mixture_comp](https://github.com/jlparkI/mix_T/blob/main/Documentation/finite_tut_eq1.png)
+
+where 
 
 # InfiniteMixtures
 
-Not added yet, coming soon.
+

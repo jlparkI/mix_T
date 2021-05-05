@@ -49,7 +49,7 @@ class FiniteModelCore():
     #The e-step in mixture fitting. Calculates responsibilities for each datapoint
     #and E[u] for the formulation of the t-distribution as a 
     #Gaussian scale mixture. It returns the responsibilities (NxK array),
-    #E[u] (NxK array), the mahalanobis distance (NxK array), and the log
+    #E[u] (NxK array), the squared mahalanobis distance (NxK array), and the log
     #of the determinant of the scale matrix.
     def Estep(self, X):
         maha_dist = self.maha_distance(X)
@@ -81,7 +81,7 @@ class FiniteModelCore():
                             scaled_x) / resp_sum[i]
             self.scale_[:,:,i].flat[::X.shape[1] + 1] += reg_covar
             self.scale_cholesky_[:,:,i] = np.linalg.cholesky(self.scale_[:,:,i])
-        #For mahalanobis distance we really need the cholesky decomposition of
+        #We really need the cholesky decomposition of
         #the precision matrix (inverse of scale), but do not want to take 
         #the inverse directly to avoid possible numerical stability issues.
         #We get what we want using the cholesky decomposition of the scale matrix
@@ -123,8 +123,10 @@ class FiniteModelCore():
 
 
 
-    #Calculates the mahalanobis distance for X to all components. Returns an
-    #array of dim N x K for N datapoints, K mixture components.
+    #Calculates the squared mahalanobis distance for X to all components. Returns an
+    #array of dim N x K for N datapoints, K mixture components. (As a shorthand
+    #we refer to squared maha distance as maha_dist but keep in mind this is actually
+    #squared mahalanobis distance).
     def maha_distance(self, X):
         maha_dist = np.empty((X.shape[0], self.mix_weights_.shape[0]))
         for i in range(self.mix_weights_.shape[0]):
