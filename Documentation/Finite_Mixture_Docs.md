@@ -40,6 +40,9 @@ convergence.
 *Note that for all methods, the input X is a numpy array where each row is a datapoint and each column is
 a feature.*
 
+| Method     | Description |
+| ---------- | ----------- |
+| aic(X)     | j           |
     aic(X)
 Returns the Akaike information criterion for the input X. A lower value is better. Varying the number of
 components and choosing the number that yields the smallest AIC is one approach to choosing an appropriate number
