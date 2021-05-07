@@ -163,7 +163,7 @@ class FiniteModelCore():
 
     #Returns the probability that the input data belongs to each component. Used
     #for making predictions.
-    def get_component_probability(self, X):
+    def get_component_probabilities(self, X):
         weighted_loglik = self.get_weighted_loglik(X)
         with np.errstate(under="ignore"):
             loglik = weighted_loglik - logsumexp(weighted_loglik, axis=1)[:,np.newaxis]

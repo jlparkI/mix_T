@@ -132,7 +132,7 @@ class FiniteStudentMixture():
 
     #Returns a categorical component assignment for each sample in the input.
     def predict(self, X):
-        probs = self.predict_proba(x)
+        probs = self.predict_proba(X)
         return np.argmax(probs, axis=1)
 
     #Returns the probability that each sample belongs to each component.
