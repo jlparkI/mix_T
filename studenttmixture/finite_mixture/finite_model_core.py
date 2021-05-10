@@ -26,7 +26,7 @@ class FiniteModelCore():
 
     #Function for fitting the model to user supplied data. The user-specified
     #fitting parameters (df, n_components, max_iter etc) are stored in and 
-    #supplied by the mixt_model class and passed to its model core when it does a
+    #supplied by the caller and passed to its model core when it does a
     #fit.
     def fit(self, X, start_df, tol, n_components, reg_covar, max_iter, verbose):
         self.df_ = np.full((n_components), start_df, dtype=np.float64)
@@ -63,8 +63,7 @@ class FiniteModelCore():
         return resp, u, maha_dist, np.mean(log_prob_norm)
 
     #The M-step in mixture fitting. Calculates the ML value for the scale matrix
-    #location and mixture weights (we are using fixed df, otherwise df would also
-    #have to be optimized). We calculate self.loc_ -- the mean, resulting array
+    #location and mixture weights. We calculate self.loc_ -- resulting array
     #is KxP for K components and P dimensions; self.scale_, array is PxPxK;
     #self.scale_cholesky_, the cholesky decomposition of the scale matrix; and
     #self.scale_inv_cholesky, the cholesky decomposition of the precision

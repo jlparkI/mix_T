@@ -8,9 +8,9 @@ class InfiniteMixHyperparams():
                     weight_concentration_prior):
         self.mean_prior = mean_prior
         self.scale_prior = scale_prior
-        self.degrees_of_freedom_prior = degrees_of_freedom_prior
-        self.weight_concentration_prior = weight_concentration_prior
-
+        self.dof_prior = degrees_of_freedom_prior
+        self.weight_conc_prior = weight_concentration_prior
+        self.lambda_prior = 1.0
 
     #Check the user hyperparameters to make sure they are sensible. If any of them
     #are None, calculate useful defaults using the input data.
@@ -36,22 +36,22 @@ class InfiniteMixHyperparams():
             if self.scale_prior.shape[0] != X.shape[1] or self.scale_prior.shape[1] != X.shape[1]:
                 raise ValueError("The shape of scale_prior must match the "
                         "dimensionality of the training data!")
-        if self.degrees_of_freedom_prior is None:
-            self.degrees_of_freedom_prior = X.shape[1]
+        if self.dof_prior is None:
+            self.dof_prior = X.shape[1]
         else:
             try:
-                self.degrees_of_freedom_prior = float(self.degrees_of_freedom_prior)
+                self.dof_prior = float(self.dof_prior)
             except:
                 raise ValueError("Degrees of freedom prior must be a float!")
-            if self.degrees_of_freedom_prior < 1:
+            if self.dof_prior < 1:
                 raise ValueError("Degrees of freedom prior must be >= 1!")
-        if self.weight_concentration_prior is None:
-            self.weight_concentration_prior = 1 / self.max_components
+        if self.weight_conc_prior is None:
+            self.weight_conc_prior = 1 / self.max_components
         else:
             try:
-                self.weight_concentration_prior = float(self.weight_concentration_prior)
+                self.weight_conc_prior = float(self.weight_conc_prior)
             except:
                 raise ValueError("Weight concentration prior must be a float!")
-            if self.weight_concentration_prior <= 0:
+            if self.weight_conc_prior <= 0:
                 raise ValueError("Weight concentration prior must be > 0!")
 
