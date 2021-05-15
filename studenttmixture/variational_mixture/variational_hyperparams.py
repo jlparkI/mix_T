@@ -2,15 +2,15 @@ import numpy as np
 
 #A simple helper class to store all model hyperpameters in one convenient bundle.
 #The hyperparameters are needed during fitting and are not modified at any time.
-class InfiniteMixHyperparams():
+class VariationalMixHyperparams():
 
     def __init__(self, loc_prior, scale_inv_prior, degrees_of_freedom_prior,
-                    weight_concentration_prior):
+                    weight_concentration_prior, wishart_v0):
         self.loc = loc_prior
         self.scale_inv = scale_inv_prior
         self.dof = degrees_of_freedom_prior
-        self.weight_conc = weight_concentration_prior
-        self.lambda_prior = 1.0
+        self.alpha = weight_concentration_prior
+        self.wishart_v0 = wishart_v0
 
     #Check the user hyperparameters to make sure they are sensible. If any of them
     #are None, calculate useful defaults using the input data.

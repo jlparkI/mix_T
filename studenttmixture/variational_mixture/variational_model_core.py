@@ -1,6 +1,6 @@
 import numpy as np, math
 from scipy.linalg import solve_triangular
-from scipy.special import gammaln, logsumexp, digamma, polygamma
+from scipy.special import gammaln, logsumexp, digamma, polygamma, loggamma
 from scipy.optimize import newton
 
 #The model core object contains all the learned parameters that are optimized
@@ -9,13 +9,14 @@ from scipy.optimize import newton
 #the fitted model before placing any calls to the model core. When fitting with
 #multiple restarts, the StudentMixture class can create more than one model core
 #and save the best one.
-class InfiniteModelCore():
+class VariationalModelCore():
 
     def __init__(self, random_state, fixed_df):
         self.mix_weights_ = None
         self.loc_ = None
-        self.scale_ = None
-        self.scale_cholesky_ = None
+        self.wishart_scale_ = None
+        self.scale_inv_ = None
+        self.wishart_scale_cholesky_ = None
         self.scale_inv_cholesky_ = None
         self.converged_ = False
         self.n_iter_ = 0
@@ -30,15 +31,17 @@ class InfiniteModelCore():
             verbose, hyperparams):
         self.df_ = np.full((max_components), start_df, dtype=np.float64)
         self.initialize_params(X, max_components)
+        resp, E_log_mixweights, E_logdet_scale, E_log_u, E_u, E_maha_dist, R_m = self.get_starting_expectation_values(X)
         lower_bound = -np.inf
         for i in range(max_iter):
-            #We refer to "E-step" and "M-step" here to emphasize the shared similarities
-            #with EM. Although this is in fact a mean field variational approximation
-            #we find our local maximum through a stepwise approach that exhibits some
-            #shared structure.
-            resp, maha_dist, Eu = self.Estep(X, hyperparams, resp, eta1, eta2)
-            self.Mstep(X, resp, Eu, hyperparams)
-            lower_bound = self.update_lower_bound(resp, maha_dist)
+            resp = self.update_resp(resp, E_log_mixweights, E_logdet_scale, E_log_u, E_u, E_maha_dist)
+            Nk = np.sum(resp, axis=0)
+            E_log_mixweights = self.update_log_mixweights(Nk, hyperparams)
+            E_u, E_log_u = self.update_u(resp, E_maha_dist)
+            E_logdet_scale_inv, ru = self.update_scale(X, resp, Nk, E_u, R_m, hyperparams)
+            E_maha_dist = self.update_loc(X, ru, hyperparams)
+
+            lower_bound = self.update_lower_bound(resp, maha_dist, Eu, Elogu)
             change = current_bound - lower_bound
             if abs(change) < tol:
                 self.converged_ = True
@@ -48,73 +51,55 @@ class InfiniteModelCore():
                 print("Actual lower bound: %s" % current_bound)
         return current_bound
 
-    #TODO: Clean this up & refactor.
-    #Ensure none of these calculations are redundant with lower bound.
-    def Estep(self, X, hyperparams, resp, eta1, eta2):
-        beta1, beta2 = self.update_beta_values(resp, eta1, eta2)
-        maha_dist = self.update_maha_dist(X)
-        adj_resp_sum = hyperparams.dof + np.sum(resp, axis=0)
-        expect_maha_dist = X.shape[1] / hyperparams.lambda_prior + \
-                adj_resp_sum[np.newaxis,:] * maha_dist
-        vj1 = 0.5 * (resp * X.shape[1] + self.df_[np.newaxis,:])
-        vj2 = 0.5 * (resp * expect_maha_dist + self.df_[np.newaxis,:])
-        Eu = vj1 / vj2
-        Elogu = digamma(vj1) - log(vj2)
-
-        logV, log1minusV = self.mix_weights_expect(beta1, beta2)
-        resp = [np.sum(np.log(np.diag(self.scale_inv_cholesky[:,:,i]))) for i in 
-            range(self.scale_inv_cholesky.shape[2])]
-        resp = np.asarray(resp) - 0.5 * X.shape[1] * np.log(2 * np.pi) + logV + log1minusV
-        resp = resp + 0.5 * X.shape[1] * Elogu - 0.5 * logu * expect_maha_dist
-        resp_norm = logsumexp(resp, axis=1)
+    def update_resp(self, E_log_mixweights, E_logdet_scale, E_log_u, E_u, E_maha_dist):
+        resp = 0.5 * E_maha_dist * E_u
+        resp = resp + E_log_mixweights + 0.5 * E_logdet_scale + 0.5 * E_log_u
+        resp = resp - self.loc_.shape[1] * 0.5 * np.log(2 * np.pi)
+        log_resp_norm = logsumexp(resp, axis=1)
         with np.errstate(under="ignore"):
-            resp = np.exp(resp - resp_norm[:,np.newaxis])
-        return resp, maha_dist, Eu
-        
-    #TODO: Vectorize all of this code -- the for loop is not efficient but is easy
-    #to implement for now -- fix this later.
-    def Mstep(self, X, resp, Eu, hyperparams):
-        weighted_resp = resp * Eu
-        resp_sum = np.sum(weighted_resp, axis=0)
-        lambda_updated = hyperparams.lambda_prior + resp_sum
+            resp = np.exp(resp - log_resp_norm[:,np.newaxis])
+        return resp
+
+    def update_log_mixweights(self, Nk, hyperparams):
+        alpha_k = Nk + hyperparams.alpha
+        alpha_0 = Nk + np.sum(hyperparams.alpha)
+        return digamma(alpha_k) - digamma(alpha_0)
+
+    def update_u(self, resp, E_maha_distance):
+        a_nm = 0.5 * (self.df[:,np.newaxis] + resp * resp.shape[0])
+        b_nm = 0.5 * (self.df[:,np.newaxis] + resp * E_maha_distance)
+        E_u = a_nm / b_nm
+        E_log_u = digamma(a_nm) - np.log(b_nm)
+        return E_u, E_log_u
+
+    def update_scale(self, X, resp, E_u, Nk, R_m, hyperparams):
+        wishart_dof_updated = hyperparams.wishart_v0 + Nk
+        ru = resp * E_u
         for i in range(self.loc_.shape[0]):
-            Xweighted = X * weighted_resp[:,i:i+1]
-            Xaverage = np.sum(Xweighted, axis=0) / resp_sum[i]
-            Xcentered = Xweighted - Xaverage[np.newaxis,:]
-            Xscatter = np.matmul(Xcentered.T, Xcentered)
-            self.loc_[i,:] = hyperparams.lambda_prior * hyperparams.loc + resp_sum[i] * Xaverage
-            self.loc_[i,:] /= (hyperparams.lambda_prior + resp_sum[i])
-            
-            self.scale_[:,:,i] = Xscatter + hyperparams.scale_inv
-            prior_dev_term = hyperparams.lambda_prior * resp_sum[i]
-            prior_dev_term = prior_dev_term / (hyperparams.lambda_prior + resp_sum[i])
-            self.scale_[:,:,i] += np.outer(Xaverage - hyperparams.loc)
-            self.scale_cholesky_[:,:,i] = np.linalg.cholesky(self.scale_[:,:,i])
-
-        self.get_scale_inv_cholesky()
-        #Add degrees of freedom optimization here later:
-        if self.fixed_df_:
-            pass
-
-    def mix_weights_expect(self, beta1, beta2):
-        beta_sum = digamma(beta1 + beta2)
-        logV = digamma(beta1) - beta_sum
-        log1minusV = digamma(beta2) - beta_sum
-        return logV, log1minusV
-
-    def update_beta_values(self, resp, eta1, eta2):
-        resp_sum = np.sum(resp, axis=0)
-        beta_1 = resp_sum + 1
-        alpha_expect = eta1 / eta2
-        beta_2 = np.zeros((resp_sum.shape[0]))
-        beta_2[:-1] = np.cumsum(resp[:-1][::-1])[::-1]
-        beta_2 += alpha_expect
-        return beta_1, beta_2
+            x_adj = X - self.loc_[i:i+1,:]
+            scatter_mat = np.dot((ru[:,i] * x_adj).T, x_adj)
+            self.wishart_scale_[:,:,i] = hyperparams.scale_inv + scatter_mat
+            self.wishart_scale_cholesky_[:,:,i] = np.linalg.cholesky(self.wishart_scale_[:,:,i])
+        #The above calculation gives us the updated scale matrix. We actually need the cholesky 
+        #decomposition of its inverse.
+        self.get_scale_inv_cholesky(Nk + hyperparams.wishart_v0)
+        E_logdet_scale_inv = -np.asarray([2 * np.sum(np.log(np.diag(self.wishart_scale_cholesky_[:,:,i]))) 
+                                for i in range(self.mix_weights_.shape[0])])
+        E_logdet_scale_inv += self.mix_weights_.shape[0] * np.log(2)
+        digamma_sum_term = np.tile(np.arange(0, self.mix_weights_.shape[0] - 1)) + hyperparams.wishart_v0
+        digamma_sum_term += Nk[:,np.newaxis] + 1
+        digamma_sum_term = np.sum(digamma(digamma_sum_term * 0.5), axis=1)
+        return E_logdet_scale_inv + digamma_sum_term
 
 
-    #Some of the calculations here are redundant. TODO: Clean this up.
-    def update_lower_bound(self, maha_dist, Eu):
-        
+    def update_loc(self, X, ru, hyperparams):
+        Rm = np.sum(ru, axis=0)
+        Rm = np.asarray([ru[i] * self.scale_inv_[:,:,i] + hyperparams.scale_inv
+                        for i in range(0,self.mix_weights_.shape[0])]) 
+        updated_loc = np.sum(ru * X, axis=0)
+        updated_loc = np.asarray([updated_loc[i] * self.scale_inv_[:,:,i] for 
+                            i in range(0,self.mix_weights_.shape[0])])
+
 
     #Returns the squared mahalanobis distance for all datapoints to all clusters.
     def update_maha_dist(self, X):
@@ -125,11 +110,14 @@ class InfiniteModelCore():
             maha_dist[:,i] = np.sum(y**2, axis=1)
         return maha_dist
 
-    #Gets the inverse of the cholesky decomposition of the scale matrix.
-    def get_scale_inv_cholesky(self):
+    #Gets the inverse of the cholesky decomposition of the scale matrix and the inverse scale (aka "precision")
+    #matrix.
+    def get_scale_inv_cholesky(self, wishart_dof):
         for i in range(self.mix_weights_.shape[0]):
-            self.scale_inv_cholesky_[:,:,i] = solve_triangular(self.scale_cholesky_[:,:,i],
-                    np.eye(self.scale_cholesky_.shape[0]), lower=True).T
+            self.scale_inv_cholesky_[:,:,i] = solve_triangular(self.wishart_scale_cholesky_[:,:,i],
+                    np.eye(self.wishart_scale_cholesky_.shape[0]), lower=True).T
+            self.scale_inv_cholesky_[:,:,i] *= wishart_dof[i]
+            self.scale_inv_[:,:,i] = np.matmul(self.scale_inv_cholesky_[:,:,i], self.scale_inv_cholesky_[:,:,i].T)
 
     #We initialize parameters using a modified kmeans++ algorithm, whereby
     #cluster centers are chosen and each datapoint is given a hard
