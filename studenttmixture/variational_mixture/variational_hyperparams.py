@@ -5,11 +5,14 @@ import numpy as np
 class VariationalMixHyperparams():
 
     def __init__(self, loc_prior, scale_inv_prior, degrees_of_freedom_prior,
-                    weight_concentration_prior, wishart_v0):
+                    weight_concentration_prior, wishart_v0, mean_covariance_prior,
+                    dirichlet_alpha_m_prior):
         self.loc = loc_prior
-        self.scale_inv = scale_inv_prior
+        self.wishart_scale_inv = scale_inv_prior
         self.dof = degrees_of_freedom_prior
-        self.alpha = weight_concentration_prior
+        self.mean_cov_prior = mean_covariance_prior
+        self.alpha0 = weight_concentration_prior
+        self.alpha_m = dirichlet_alpha_m_prior
         self.wishart_v0 = wishart_v0
 
     #Check the user hyperparameters to make sure they are sensible. If any of them
