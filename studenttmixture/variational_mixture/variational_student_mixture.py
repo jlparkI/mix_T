@@ -1,11 +1,11 @@
 import numpy as np
-from .infinite_model_core import InfiniteModelCore 
-from .infinite_mix_hyperparams import InfiniteMixHyperparams
+from .variational_model_core import VariationalModelCore 
+from .variational_hyperparams import VariationalMixHyperparams
 
 #Currently for the infinite mixture to ensure fast fitting degrees of freedom is treated
 #as fixed and locked to a user specified value. 4 is a good default, 1 is for very
 #heavy tailed distributions.
-class InfiniteStudentMixture():
+class BayesianStudentMixture():
 
     def __init__(self, max_components = 10, tol=1e-3,
             reg_covar=1e-06, max_iter=500, n_init=1,
@@ -142,7 +142,7 @@ class InfiniteStudentMixture():
 
     #Returns a categorical component assignment for each sample in the input.
     def predict(self, X):
-        probs = self.predict_proba(x)
+        probs = self.predict_proba(X)
         return np.argmax(probs, axis=1)
 
     #Returns the probability that each sample belongs to each component.

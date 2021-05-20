@@ -2,15 +2,18 @@ import numpy as np
 
 #A simple helper class to store all model hyperpameters in one convenient bundle.
 #The hyperparameters are needed during fitting and are not modified at any time.
-class InfiniteMixHyperparams():
+class VariationalMixHyperparams():
 
-    def __init__(self, mean_prior, scale_prior, degrees_of_freedom_prior,
-                    weight_concentration_prior):
-        self.mean_prior = mean_prior
-        self.scale_prior = scale_prior
-        self.degrees_of_freedom_prior = degrees_of_freedom_prior
-        self.weight_concentration_prior = weight_concentration_prior
-
+    def __init__(self, loc_prior, scale_inv_prior, degrees_of_freedom_prior,
+                    weight_concentration_prior, wishart_v0, mean_covariance_prior,
+                    dirichlet_alpha_m_prior):
+        self.loc = loc_prior
+        self.wishart_scale_inv = scale_inv_prior
+        self.dof = degrees_of_freedom_prior
+        self.mean_cov_prior = mean_covariance_prior
+        self.alpha0 = weight_concentration_prior
+        self.alpha_m = dirichlet_alpha_m_prior
+        self.wishart_v0 = wishart_v0
 
     #Check the user hyperparameters to make sure they are sensible. If any of them
     #are None, calculate useful defaults using the input data.
@@ -36,22 +39,22 @@ class InfiniteMixHyperparams():
             if self.scale_prior.shape[0] != X.shape[1] or self.scale_prior.shape[1] != X.shape[1]:
                 raise ValueError("The shape of scale_prior must match the "
                         "dimensionality of the training data!")
-        if self.degrees_of_freedom_prior is None:
-            self.degrees_of_freedom_prior = X.shape[1]
+        if self.dof_prior is None:
+            self.dof_prior = X.shape[1]
         else:
             try:
-                self.degrees_of_freedom_prior = float(self.degrees_of_freedom_prior)
+                self.dof_prior = float(self.dof_prior)
             except:
                 raise ValueError("Degrees of freedom prior must be a float!")
-            if self.degrees_of_freedom_prior < 1:
+            if self.dof_prior < 1:
                 raise ValueError("Degrees of freedom prior must be >= 1!")
-        if self.weight_concentration_prior is None:
-            self.weight_concentration_prior = 1 / self.max_components
+        if self.weight_conc_prior is None:
+            self.weight_conc_prior = 1 / self.max_components
         else:
             try:
-                self.weight_concentration_prior = float(self.weight_concentration_prior)
+                self.weight_conc_prior = float(self.weight_conc_prior)
             except:
                 raise ValueError("Weight concentration prior must be a float!")
-            if self.weight_concentration_prior <= 0:
+            if self.weight_conc_prior <= 0:
                 raise ValueError("Weight concentration prior must be > 0!")
 
