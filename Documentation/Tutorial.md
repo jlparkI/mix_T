@@ -4,6 +4,7 @@ Modeling data using finite and infinite mixtures of t-distributions -- a tutoria
 - [Introduction](#Introduction)
 - [Finite Mixtures](#FiniteMixtures)
 - [Infinite Mixtures](#InfiniteMixtures)
+- [Deriving the variational mean-field equations](https://github.com/jlparkI/mix_T/blob/main/Documentation/variational_mean_field.pdf)<br>
 
 
 # Introduction
