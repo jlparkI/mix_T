@@ -229,8 +229,7 @@ class FiniteStudentMixture():
     #E[u] (NxK array), the squared mahalanobis distance (NxK array), and the log
     #of the determinant of the scale matrix.
     def Estep(self, X, df_, loc_, scale_inv_cholesky_, scale_cholesky_, mix_weights_):
-        sq_maha_dist = self.sq_maha_distance(X, loc_, scale_inv_cholesky_)
-        
+        sq_maha_dist = self.vectorized_sq_maha_distance(X, loc_, scale_inv_cholesky_)
         loglik = self.get_loglik(X, sq_maha_dist, df_, 
                 scale_cholesky_, mix_weights_)
 
@@ -278,20 +277,21 @@ class FiniteStudentMixture():
 
     #Optimizes the df parameter using Newton Raphson.
     def optimize_df(self, X, resp, u, df_):
-        for i in range(self.n_components):
-            optimal_df = newton(self.dof_first_deriv, x0 = df_[i],
+        with np.errstate(all="ignore"):
+            for i in range(self.n_components):
+                optimal_df = newton(self.dof_first_deriv, x0 = df_[i],
                                  fprime = self.dof_second_deriv,
                                  fprime2 = self.dof_third_deriv,
                                  args = (u, resp, X.shape[1], i, df_),
                                  full_output = False, disp=False, tol=1e-3)
-            #It may occasionally happen that newton does not converge.
-            #If so, ignore the result for this iteration (keep the pre-existing
-            #df value).
-            if math.isnan(df_[i]) == False:
-                df_[i] = optimal_df
-            #DF should never be less than 1 but can go arbitrarily high.
-            if df_[i] < 1:
-                df_[i] = 1.0
+                #It may occasionally happen that newton does not converge.
+                #If so, ignore the result for this iteration (keep the pre-existing
+                #df value).
+                if math.isnan(optimal_df) == False:
+                    df_[i] = optimal_df
+                #DF should never be less than 1 but can go arbitrarily high.
+                if df_[i] < 1:
+                    df_[i] = 1.0
         return df_
 
 
@@ -314,7 +314,10 @@ class FiniteStudentMixture():
 
 
     #Calculates the squared mahalanobis distance for X to all components. Returns an
-    #array of dim N x K for N datapoints, K mixture components.
+    #array of dim N x K for N datapoints, K mixture components. This is a non-vectorized
+    #version of the vectorized function below (preseved primarily for troubleshooting,
+    #not actively used at present). It is more readable but slower than the vectorized
+    #version.
     def sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
         sq_maha_dist = np.empty((X.shape[0], scale_inv_cholesky_.shape[2]))
         for i in range(sq_maha_dist.shape[1]):
@@ -323,6 +326,16 @@ class FiniteStudentMixture():
             sq_maha_dist[:,i] = np.sum(y**2, axis=1)
         return sq_maha_dist
 
+
+    #Calculates the squared mahalanobis distance for X to all components. Returns an
+    #array of dim N x K for N datapoints, K mixture components. We use the cholesky
+    #decomposition of the precision matrix to avoid having to invert anything.
+    def vectorized_sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
+        sq_maha_dist = np.empty((X.shape[0], self.n_components))
+        y1 = np.matmul(X, np.transpose(scale_inv_cholesky_, (2,0,1)))
+        y2 = np.sum(loc_.T[:,np.newaxis,:] * scale_inv_cholesky_, axis=0)
+        y = np.transpose(y1, (1,0,2)) - y2.T
+        return np.sum(y**2, axis=2)
 
     #Gets the inverse of the cholesky decomposition of the scale matrix.
     def get_scale_inv_cholesky(self, scale_cholesky_, scale_inv_cholesky_):
