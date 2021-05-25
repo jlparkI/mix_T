@@ -1,2 +1,1 @@
-from studenttmixture.finite_mixture import finite_student_mixture
 from studenttmixture.finite_mixture.finite_student_mixture import FiniteStudentMixture
