@@ -29,7 +29,6 @@ class VariationalModelCore():
     #caller and passed to ModelCore when it does a fit.
     def fit(self, X, start_df, tol, max_components, reg_covar, max_iter, 
             verbose, hyperparams):
-        self.df_ = np.full((max_components), start_df, dtype=np.float64)
         self.initialize_params(X, max_components)
         resp, E_log_mixweights, E_logdet_scale, E_log_u, E_u, E_maha_dist, R_m = self.get_starting_expectation_values(X)
         lower_bound = -np.inf
@@ -122,6 +121,16 @@ class VariationalModelCore():
             dist_array += np.trace(np.matmul(E_mean_outer_prod, self.scale_inv_[:,:,i]))
             E_sq_maha_dist.append(dist_array)
         return E_sq_maha_dist
+    
+    #Calculates the squared mahalanobis distance for X to all components. Returns an
+    #array of dim N x K for N datapoints, K mixture components. We use the cholesky
+    #decomposition of the precision matrix to avoid having to invert anything.
+    def vectorized_sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
+        sq_maha_dist = np.empty((X.shape[0], self.n_components))
+        y1 = np.matmul(X, np.transpose(scale_inv_cholesky_, (2,0,1)))
+        y2 = np.sum(loc_.T[:,np.newaxis,:] * scale_inv_cholesky_, axis=0)
+        y = np.transpose(y1, (1,0,2)) - y2.T
+        return np.sum(y**2, axis=2)
 
     
     #Updates the variational lower bound so we can assess convergence. We leave out
@@ -181,31 +190,6 @@ class VariationalModelCore():
             self.scale_inv_cholesky_[:,:,i] *= np.sqrt(wishart_dof[i])
             self.scale_inv_[:,:,i] = np.matmul(self.scale_inv_cholesky_[:,:,i], self.scale_inv_cholesky_[:,:,i].T)
 
-    #We initialize parameters using a modified kmeans++ algorithm, whereby
-    #cluster centers are chosen and each datapoint is given a hard
-    #assignment to the cluster
-    #with the closest center to get the starting locations.
-    def initialize_params(self, X, max_components):
-        np.random.seed(self.random_state)
-        self.loc_ = [X[np.random.randint(0, X.shape[0]-1), :]]
-        self.mix_weights_ = np.empty(max_components)
-        self.mix_weights_.fill(1/max_components)
-        dist_arr_list = []
-        for i in range(1, max_components):
-            dist_arr = np.sum((X - self.loc_[i-1])**2, axis=1)
-            dist_arr_list.append(dist_arr)
-            distmat = np.stack(dist_arr_list, axis=-1)
-            min_dist = np.min(distmat, axis=1)
-            min_dist = min_dist / np.sum(min_dist)
-            next_center_id = np.random.choice(distmat.shape[0], size=1, p=min_dist)
-            self.loc_.append(X[next_center_id[0],:])
-
-        self.loc_ = np.stack(self.loc_)
-        #For initialization, set all covariance matrices to I.
-        self.scale_ = [np.eye(X.shape[1]) for i in range(max_components)]
-        self.scale_ = np.stack(self.scale_, axis=-1)
-        self.scale_cholesky_ = np.copy(self.scale_)
-        self.scale_inv_cholesky_ = np.copy(self.scale_)
     
     #Calculates log p(X | theta) using the mixture components formulated as 
     #multivariate t-distributions (for specific steps in the algorithm it 
