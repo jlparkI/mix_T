@@ -43,8 +43,8 @@ from scipy.optimize import newton
 
 class FiniteStudentMixture():
 
-    def __init__(self, n_components = 2, tol=1e-3,
-            reg_covar=1e-06, max_iter=500, n_init=1,
+    def __init__(self, n_components = 2, tol=1e-5,
+            reg_covar=1e-06, max_iter=1000, n_init=1,
             df = 4.0, fixed_df = True, random_state=123, verbose=False):
         self.check_user_params(n_components, tol, reg_covar, max_iter, n_init, df, random_state)
         #General model parameters specified by user.
@@ -54,7 +54,8 @@ class FiniteStudentMixture():
         self.tol = tol
         self.reg_covar = reg_covar
         self.max_iter = max_iter
-        #the number of restarts -- this is different from max_iter, which is
+        #the number of restarts -- this is different from max_iter, which is the maximum 
+        #number of iterations per restart.
         self.n_init = n_init
         self.random_state = random_state
         self.verbose = verbose
@@ -197,18 +198,17 @@ class FiniteStudentMixture():
         #For each iteration, we run the E step calculations then the M step
         #calculations, update the lower bound then check for convergence.
         for i in range(self.max_iter):
-            resp, u, current_bound = self.Estep(X, df_, loc_, scale_inv_cholesky_, 
+            resp, E_gamma, current_bound = self.Estep(X, df_, loc_, scale_inv_cholesky_, 
                                 scale_cholesky_, mix_weights_)
             
             mix_weights_, loc_, scale_, scale_cholesky_, scale_inv_cholesky_,\
-                            df_ = self.Mstep(X, resp, u, scale_, 
+                            df_ = self.Mstep(X, resp, E_gamma, scale_, 
                                 scale_cholesky_, df_, scale_inv_cholesky_)
             change = current_bound - lower_bound
             #IN GENERAL, for EM, the lower bound will always increase, and this is in
             #fact a useful debugging tool; in testing for this package this was in fact
-            #always true. However, in the event that due to floating point
-            #error or a situation where Newton-Raphson did not converge for one or more df so
-            #not all df were updated, we do not want to generate what might from the user's
+            #always true. However, in the event that for some reason specific to some
+            #unusual dataset it does not, we do not want to generate what might from the user's
             #perspective be a rather mystifying error, so we use abs(change) rather than 
             #change and do not check the sign. scikitlearn's gaussian mixture does the same!
             if abs(change) < self.tol:
@@ -229,8 +229,8 @@ class FiniteStudentMixture():
     #E[u] (NxK array), the squared mahalanobis distance (NxK array), and the log
     #of the determinant of the scale matrix.
     def Estep(self, X, df_, loc_, scale_inv_cholesky_, scale_cholesky_, mix_weights_):
-        sq_maha_dist = self.vectorized_sq_maha_distance(X, loc_, scale_inv_cholesky_)
-        loglik = self.get_loglik(X, sq_maha_dist, df_, 
+        sq_maha_dist = self.vectorized_sq_maha_distance(X, loc_, scale_, scale_inv_cholesky_)
+        loglik = self.get_loglikelihood(X, sq_maha_dist, df_, 
                 scale_cholesky_, mix_weights_)
 
         weighted_log_prob = loglik + np.log(np.clip(mix_weights_,
@@ -238,8 +238,8 @@ class FiniteStudentMixture():
         log_prob_norm = logsumexp(weighted_log_prob, axis=1)
         with np.errstate(under="ignore"):
             resp = np.exp(weighted_log_prob - log_prob_norm[:, np.newaxis])
-        u = (df_[np.newaxis,:] + X.shape[1]) / (df_[np.newaxis,:] + sq_maha_dist)
-        return resp, u, np.mean(log_prob_norm)
+        E_gamma = (df_[np.newaxis,:] + X.shape[1]) / (df_[np.newaxis,:] + sq_maha_dist)
+        return resp, E_gamma, np.mean(log_prob_norm)
 
 
 
@@ -249,10 +249,10 @@ class FiniteStudentMixture():
     #scale_cholesky_, the cholesky decomposition of the scale matrix; and
     #scale_inv_cholesky, the cholesky decomposition of the precision
     #matrix (also mix_weights_, the component mixture weights).
-    def Mstep(self, X, resp, u, scale_, scale_cholesky_, df_,
+    def Mstep(self, X, resp, E_gamma, scale_, scale_cholesky_, df_,
                 scale_inv_cholesky_):
         mix_weights_ = np.mean(resp, axis=0)
-        ru = resp * u
+        ru = resp * E_gamma
         loc_ = np.dot((ru).T, X)
         resp_sum = np.sum(ru, axis=0) + 10 * np.finfo(resp.dtype).eps
         loc_ = loc_ / resp_sum[:,np.newaxis]
@@ -270,45 +270,58 @@ class FiniteStudentMixture():
         scale_inv_cholesky_ = self.get_scale_inv_cholesky(scale_cholesky_,
                             scale_inv_cholesky_)
         if self.fixed_df == False:
-            df_ = self.optimize_df(X, resp, u, df_)
+            df_ = self.optimize_df(X, resp, E_gamma, df_)
         return mix_weights_, loc_, scale_, scale_cholesky_, scale_inv_cholesky_, df_
 
 
 
     #Optimizes the df parameter using Newton Raphson.
-    def optimize_df(self, X, resp, u, df_):
-        with np.errstate(all="ignore"):
-            for i in range(self.n_components):
-                optimal_df = newton(self.dof_first_deriv, x0 = df_[i],
+    def optimize_df(self, X, resp, E_gamma, df_):
+        #First calculate the constant term of the degrees of freedom optimization
+        #expression so that it does not need to be recalculated on each iteration.
+        df_x_dim = 0.5 * (df_ + X.shape[1])
+        resp_sum = np.sum(resp, axis=0)
+        ru_sum = np.sum(resp * (np.log(E_gamma) - E_gamma), axis=0)
+        constant_term = 1.0 + (ru_sum / resp_sum) + digamma(df_x_dim) - \
+                    np.log(df_x_dim)
+        for i in range(self.n_components):
+            optimal_df = newton(func = self.dof_first_deriv, x0 = df_[i],
                                  fprime = self.dof_second_deriv,
                                  fprime2 = self.dof_third_deriv,
-                                 args = (u, resp, X.shape[1], i, df_),
+                                 args = ([constant_term[i]]),  maxiter=self.max_iter,
                                  full_output = False, disp=False, tol=1e-3)
-                #It may occasionally happen that newton does not converge.
-                #If so, ignore the result for this iteration (keep the pre-existing
-                #df value).
-                if math.isnan(optimal_df) == False:
-                    df_[i] = optimal_df
-                #DF should never be less than 1 but can go arbitrarily high.
-                if df_[i] < 1:
-                    df_[i] = 1.0
+            #It may occasionally happen that newton does not converge, usually
+            #if the user has set a very small value for max_iter, which is used both
+            #for the maximum number of iterations per restart AND for the max
+            #number of iterations per newton raphson optimization. If so, we
+            #keep the existing value. (Alternatively could raise a value error...but
+            #may be better to simply proceed with the existing value in this situation).
+            if math.isnan(df_[i]) == False:
+                df_[i] = optimal_df
+            #DF should never be less than 1 but can go arbitrarily high.
+            if df_[i] < 1:
+                df_[i] = 1.0
         return df_
 
 
-    # First derivative of the complete data log likelihood w/r/t df.
-    def dof_first_deriv(self, dof, u, resp, dim, i, df_):
-        grad = 1.0 - digamma(dof * 0.5) + np.log(0.5 * dof)
-        grad += (1 / resp[:,i].sum(axis=0)) * (resp[:,i] * (np.log(u[:,i]) - u[:,i])).sum(axis=0)
-        return grad + digamma(0.5 * (df_[i] + dim)) - np.log(0.5 * (df_[i] + dim))
+    # First derivative of the complete data log likelihood w/r/t df. This is used to 
+    #optimize the input value (dof) via the Newton-Raphson algorithm using the scipy.optimize.
+    #newton function (see self.optimize.df).
+    def dof_first_deriv(self, dof, constant_term):
+        clipped_dof = np.clip(dof, a_min=1e-9, a_max=None)
+        return constant_term - digamma(dof * 0.5) + np.log(0.5 * clipped_dof)
 
-
-    #Second derivative of the complete data log likelihood w/r/t df.
-    def dof_second_deriv(self, dof, u, resp, dim, i, df_):
+    #Second derivative of the complete data log likelihood w/r/t df. This is used to
+    #optimize the input value (dof) via the Newton-Raphson algorithm using the
+    #scipy.optimize.newton function (see self.optimize_df).
+    def dof_second_deriv(self, dof, constant_term):
         return -0.5 * polygamma(1, 0.5 * dof) + 1 / dof
 
 
-    #Third derivative of the complete data log likelihood w/r/t df.
-    def dof_third_deriv(self, dof, u, resp, dim, i, df_):
+    #Third derivative of the complete data log likelihood w/r/t df. This is used to optimize
+    #the input value (dof) via the Newton-Raphson algorithm using the scipy.optimize.newton
+    #function (see self.optimize_df). 
+    def dof_third_deriv(self, dof, constant_term):
         return -0.25 * polygamma(2, 0.5 * dof) - 1 / (dof**2)
 
 
@@ -351,17 +364,19 @@ class FiniteStudentMixture():
     #The function returns an array of dim N x K for N datapoints, K mixture components.
     #It expects to receive the squared mahalanobis distance and the model 
     #parameters (since during model fitting these are still being updated).
-    def get_loglik(self, X, sq_maha_dist, df_, scale_cholesky_, mix_weights_):
+    def get_loglikelihood(self, X, sq_maha_dist, df_, scale_cholesky_, mix_weights_):
         sq_maha_dist = 1 + sq_maha_dist / df_[np.newaxis,:]
         
         #THe rest of this is just the calculations for log probability of X for the
         #student's t distributions described by the input parameters broken up
         #into three convenient chunks that we sum on the last line.
         sq_maha_dist = -0.5*(df_[np.newaxis,:] + X.shape[1]) * np.log(sq_maha_dist)
+        
         const_term = gammaln(0.5*(df_ + X.shape[1])) - gammaln(0.5*df_)
         const_term = const_term - 0.5*X.shape[1]*(np.log(df_) + np.log(np.pi))
+        
         scale_logdet = [np.sum(np.log(np.diag(scale_cholesky_[:,:,i])))
-                        for i in range(mix_weights_.shape[0])]
+                        for i in range(self.n_components)]
         scale_logdet = np.asarray(scale_logdet)
         return -scale_logdet[np.newaxis,:] + const_term[np.newaxis,:] + sq_maha_dist
     
@@ -483,7 +498,7 @@ class FiniteStudentMixture():
     #functions which check before calling it that the model has been fitted.
     def get_weighted_loglik(self, X):
         sq_maha_dist = self.sq_maha_distance(X, self.loc_, self.scale_inv_cholesky_)
-        loglik = self.get_loglik(X, sq_maha_dist, self.df_, self.scale_cholesky_,
+        loglik = self.get_loglikelihood(X, sq_maha_dist, self.df_, self.scale_cholesky_,
                         self.mix_weights_)
         return loglik + np.log(self.mix_weights_)[np.newaxis,:]
 
