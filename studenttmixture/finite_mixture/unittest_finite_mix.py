@@ -1,9 +1,50 @@
 import unittest, numpy as np, scipy
-from scipy import stats
+from scipy import stats, spatial
 from finite_student_mixture import FiniteStudentMixture
 
 
 class TestCoreProbabilityFunctions(unittest.TestCase):
+
+
+    #Test the squared mahalanobis distance calculation by generating a set
+    #of random datapoints and measuring squared mahalanobis distance to a
+    #prespecified location & scale matrix distribution, then compare the
+    #result with scipy's mahalanobis function. For unittesting this package
+    #computational expense is not a key concern so we use inefficient approaches
+    #(np.linalg.inv, Python for loop over a numpy array etc) for simplicity.
+    def test_sq_maha_distance(self):
+        np.random.seed(123)
+        X = np.random.uniform(low=-10,high=10,size=(250,3))
+        FiniteMix = FiniteStudentMixture()
+        #Arbitrary scale matrices...
+        covmat1 = np.asarray([[0.025, 0.0075, 0.00175],
+                            [0.0075, 0.0070, 0.00135],
+                            [0.00175, 0.00135, 0.00043]])
+        covmat2 = np.asarray([[1.2, 0.1, 0.42],
+                            [0.1, 0.5, 0.0035],
+                            [0.42, 0.0035, 0.35]])
+        chole_covmat1 = np.linalg.cholesky(covmat1)
+        chole_covmat2 = np.linalg.cholesky(covmat2)
+        chole_covmat = np.stack([chole_covmat1, chole_covmat2], axis=-1)
+        chole_inv_cov = np.empty((3,3,2))
+        chole_inv_cov = FiniteMix.get_scale_inv_cholesky(chole_covmat, chole_inv_cov)
+        #Arbitrary locations...
+        loc = np.asarray([[0.156,-0.324,0.456],[-2.5,3.6,1.2]])
+        scale_inv1 = np.linalg.inv(covmat1)
+        scale_inv2 = np.linalg.inv(covmat2)
+        scale_inv = np.stack([scale_inv1, scale_inv2], axis=-1)
+
+        finite_mix_dist = FiniteMix.vectorized_sq_maha_distance(X, loc, chole_inv_cov)
+        true_dist = np.empty((X.shape[0], 2))
+        for i in range(X.shape[0]):
+            true_dist[i,0] = scipy.spatial.distance.mahalanobis(X[i,:], loc[0,:],
+                            scale_inv1)**2
+            true_dist[i,1] = scipy.spatial.distance.mahalanobis(X[i,:], loc[1,:],
+                            scale_inv2)**2
+        outcome = np.allclose(finite_mix_dist, true_dist)
+        print("Does scipy's mahalanobis match "
+                "the FiniteMixture vectorized_sq_maha_distance function? %s"%outcome)
+        self.assertTrue(outcome)
 
 
 
@@ -41,9 +82,10 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         sq_maha_dist = FiniteMix.sq_maha_distance(samples, FiniteMix.loc_, FiniteMix.scale_inv_cholesky_)
         loglik = FiniteMix.get_loglikelihood(samples, sq_maha_dist, FiniteMix.df_,
                     FiniteMix.scale_cholesky_, FiniteMix.mix_weights_).flatten()
-        print("np.allclose result for scipy's multivariate t logpdf vs "
-                "the FiniteMixture get_loglikelihood function: %s"%np.allclose(true_loglik, loglik))
-        self.assertTrue(np.allclose(true_loglik, loglik))
+        outcome = np.allclose(true_loglik, loglik)
+        print("Does scipy's multivariate t logpdf match "
+                "the FiniteMixture get_loglikelihood function? %s"%outcome)
+        self.assertTrue(outcome)
 
 
 
