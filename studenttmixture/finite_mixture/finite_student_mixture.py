@@ -1,13 +1,25 @@
+'''Finite mixture of Student's t-distributions fit using EM.'''
+
+#Author: Jonathan Parkinson <jlparkinson1@gmail.com>
+#License: MIT
+
 import numpy as np, math
 from scipy.linalg import solve_triangular
 from scipy.special import gammaln, logsumexp, digamma, polygamma
 from scipy.optimize import newton
 
 
+
+
+
+#################################################################################
+
 #This class is used to fit a finite student's t mixture using the EM algorithm (see
 #documentation for usage, derivation of update equations). EM is a maximum likelihood
 #approach so we get a point estimate and do not require a prior. For a more Bayesian
-#approach, use the variational model instead. This class takes as inputs:
+#approach, use the variational model instead.
+#
+#INPUTS:
 #n_components -- the number of components in the mixture
 #tol          -- if the change in the lower bound between iterations is less than tol, 
 #                this restart has converged
@@ -26,7 +38,7 @@ from scipy.optimize import newton
 #random_state -- Seed to the random number generator to ensure restarts are reproducible.
 #verbose      -- Print updates to keep user updated on fitting.
 
-#Parameters that are stored:
+#PARAMETERS FROM FIT:
 #mix_weights  -- The mixture weights for each component of the mixture; sums to one.
 #loc_         -- Equivalent of mean for a gaussian; the center of each component's 
 #                distribution. For a student's t distribution, this is called the "location"
@@ -45,8 +57,10 @@ class FiniteStudentMixture():
 
     def __init__(self, n_components = 2, tol=1e-5,
             reg_covar=1e-06, max_iter=1000, n_init=1,
-            df = 4.0, fixed_df = True, random_state=123, verbose=False):
-        self.check_user_params(n_components, tol, reg_covar, max_iter, n_init, df, random_state)
+            df = 4.0, fixed_df = True, random_state=123, verbose=False,
+            init_type = "k++"):
+        self.check_user_params(n_components, tol, reg_covar, max_iter, n_init, df, random_state,
+                init_type)
         #General model parameters specified by user.
         self.start_df_ = float(df)
         self.fixed_df = fixed_df
@@ -54,6 +68,7 @@ class FiniteStudentMixture():
         self.tol = tol
         self.reg_covar = reg_covar
         self.max_iter = max_iter
+        self.init_type = init_type
         #the number of restarts -- this is different from max_iter, which is the maximum 
         #number of iterations per restart.
         self.n_init = n_init
@@ -71,7 +86,8 @@ class FiniteStudentMixture():
         self.df_ = None
 
     #Function to check the user specified model parameters for validity.
-    def check_user_params(self, n_components, tol, reg_covar, max_iter, n_init, df, random_state):
+    def check_user_params(self, n_components, tol, reg_covar, max_iter, n_init, df, random_state,
+            init_type):
         try:
             n_components = int(n_components)
             tol = float(tol)
@@ -79,8 +95,10 @@ class FiniteStudentMixture():
             random_state = int(random_state)
             max_iter = int(max_iter)
             reg_covar = float(reg_covar)
+            init_type = str(init_type)
         except:
-            raise ValueError("n_components, tol, max_iter, n_init, reg_covar and random state should be numeric.")
+            raise ValueError("n_components, tol, max_iter, n_init, reg_covar and random state should be numeric; "
+                    "init_type should be a string.")
         if df > 1000:
             raise ValueError("Very large values for dof will give results essentially identical to a Gaussian mixture."
                     "DF = 4 is suggested as a good default. If fixed_df is False, the df will be "
@@ -97,6 +115,8 @@ class FiniteStudentMixture():
             raise ValueError("Inappropriate value for n_components! Must be >= 1.")
         if reg_covar < 0:
             raise ValueError("Reg covar must be >= 0.")
+        if init_type not in ["k++", "kmeans"]:
+            raise ValueError("init_type must be one of either 'k++' or 'kmeans'.")
 
 
     #Function to check whether the input has the correct dimensionality.
@@ -158,6 +178,11 @@ class FiniteStudentMixture():
 
     #Function for fitting a model using the parameters the user
     #selected when creating the model object.
+    #
+    #INPUTS
+    #X              --  The raw data for fitting. This must be either a 1d array, in which case
+    #                   self.check_fitting_data will reshape it to a 2d 1-column array, or
+    #                   a 2d array where each column is a feature and each row a datapoint.
     def fit(self, X):
         x = self.check_fitting_data(X)
         best_lower_bound = -np.inf
@@ -167,7 +192,7 @@ class FiniteStudentMixture():
             #Increment random state so that each random initialization is different from the
             #rest but so that the overall chain is reproducible.
             lower_bound, convergence, loc_, scale_, scale_inv_cholesky_, mix_weights_,\
-                    df_, scale_cholesky_ = self.fitting_iteration(x, self.random_state + i)
+                    df_, scale_cholesky_ = self.fitting_restart(x, self.random_state + i)
             if self.verbose:
                 print("Restart %s now complete"%i)
             if convergence == False:
@@ -186,14 +211,31 @@ class FiniteStudentMixture():
                         "tol or check data for possible issues.")
     
 
-    #A single fitting restart. Returns the final parameters, its lower bound
-    #and its convergence state. If the fit converges on this attempt,
-    #and if lower bound is better than any so far achieved, the model object
-    #will use these parameters as its best to date.
-    def fitting_iteration(self, X, random_state):
+    #A single fitting restart.
+    #
+    #INPUTS
+    #X              --  The raw data. Must be a 2d array where each column is a feature and
+    #                   each row is a datapoint. The caller (self.fit) ensures this is true.
+    #random_state   --  The seed for the random number generator.
+    #
+    #OUTPUTS        
+    #current_bound  --  The lower bound for the current fitting iteration. The caller (self.fit)
+    #                   keeps the set of parameters that have the best associated lower bound.
+    #convergence    --  A boolean indicating convergence or lack thereof.
+    #loc_           --  The locations (analogous to means for a Gaussian) of the components.
+    #                   Shape is K x D for K components, D dimensions.
+    #scale_         --  The scale matrices (analogous to covariance for a Gaussian).
+    #                   Shape is D x D x K for D dimensions, K components.
+    #scale_inv_cholesky_    --  The cholesky decomposition of the inverse of the scale matrices.
+    #                   Shape is D x D x K for D dimensions, K components.
+    #mix_weights_   --  The mixture weights. SHape is K for K components.
+    #df_            --  The degrees of freedom. Shape is K for K components.
+    #scale_cholesky_    --  The cholesky decomposition of the scale matrices.
+    #                   Shape is D x D x K for D dimensions, K components.
+    def fitting_restart(self, X, random_state):
         df_ = np.full((self.n_components), self.start_df_, dtype=np.float64)
         loc_, scale_, mix_weights_, scale_cholesky_, scale_inv_cholesky_ = \
-                self.initialize_params(X, random_state)
+                self.initialize_params(X, random_state, self.init_type)
         lower_bound, convergence = -np.inf, False
         #For each iteration, we run the E step calculations then the M step
         #calculations, update the lower bound then check for convergence.
@@ -223,13 +265,28 @@ class FiniteStudentMixture():
 
 
 
-    #The e-step in mixture fitting. Calculates responsibilities for each datapoint
-    #and E[u] for the formulation of the t-distribution as a 
-    #Gaussian scale mixture. It returns the responsibilities (NxK array),
-    #E[u] (NxK array), the squared mahalanobis distance (NxK array), and the log
-    #of the determinant of the scale matrix.
+    #The e-step in mixture fitting. Updates the "hidden variables" in the mixture description.
+    #
+    #INPUTS
+    #X              --  The data.
+    #df_            --  The degrees of freedom. Shape is K for K components.
+    #loc_           --  The current values of the locations of the components.
+    #                   Shape is K x D for K components, D dimensions.
+    #scale_inv_cholesky_    --  The cholesky decomposition of the inverse of the scale matrices.
+    #                   Shape is D x D x K for D dimensions, K components.
+    #scale_cholesky_    --  The cholesky decomposition of the scale matrices.
+    #                   Shape is D x D x K for D dimensions, K components.
+    #mix_weights_   --  The mixture weights. Shape is K for K components.
+    #
+    #OUTPUTS
+    #resp           --  The responsibilities of each component for each datapoint.
+    #                   Shape is N x K (N datapoints, K components).
+    #E_gamma        --  The ML estimate of the "hidden variable" described by 
+    #                   a gamma distribution in the formulation of the student's t-distribution
+    #                   as a scale mixture of normals. 
+    #lower_bound    --  The lower bound (to determine whether fit has converged).
     def Estep(self, X, df_, loc_, scale_inv_cholesky_, scale_cholesky_, mix_weights_):
-        sq_maha_dist = self.vectorized_sq_maha_distance(X, loc_, scale_, scale_inv_cholesky_)
+        sq_maha_dist = self.vectorized_sq_maha_distance(X, loc_, scale_inv_cholesky_)
         loglik = self.get_loglikelihood(X, sq_maha_dist, df_, 
                 scale_cholesky_, mix_weights_)
 
@@ -239,16 +296,39 @@ class FiniteStudentMixture():
         with np.errstate(under="ignore"):
             resp = np.exp(weighted_log_prob - log_prob_norm[:, np.newaxis])
         E_gamma = (df_[np.newaxis,:] + X.shape[1]) / (df_[np.newaxis,:] + sq_maha_dist)
-        return resp, E_gamma, np.mean(log_prob_norm)
+        lower_bound = np.mean(log_prob_norm)
+        return resp, E_gamma, lower_bound
 
 
 
-    #The M-step in mixture fitting. Calculates the ML value for the scale matrix
-    #location and mixture weights. We calculate loc_ -- resulting array
-    #is KxP for K components and P dimensions; scale_, array is PxPxK;
-    #scale_cholesky_, the cholesky decomposition of the scale matrix; and
-    #scale_inv_cholesky, the cholesky decomposition of the precision
-    #matrix (also mix_weights_, the component mixture weights).
+    #The M-step in mixture fitting. Updates the model parameters using the "hidden variable"
+    #values calculated in the E-step.
+    #
+    #INPUTS
+    #X              --  The data.
+    #resp           --  The responsibilities of each component for each datapoint.
+    #                   Shape is N x K (N datapoints, K components).
+    #E_gamma        --  The ML estimate of the "hidden variable" described by 
+    #                   a gamma distribution in the formulation of the student's t-distribution
+    #                   as a scale mixture of normals. 
+    #scale_         --  The scale matrices (analogous to covariance for a Gaussian).
+    #                   Shape is D x D x K for D dimensions, K components.
+    #scale_cholesky_    --  The cholesky decomposition of the scale matrices.
+    #                   Shape is D x D x K for D dimensions, K components.
+    #df_            --  The degrees of freedom. Shape is K for K components.
+    #scale_inv_cholesky_    --  The cholesky decomposition of the inverse of the scale matrices.
+    #                   Shape is D x D x K for D dimensions, K components.
+    #OUTPUTS
+    #mix_weights_   --  The mixture weights. SHape is K for K components.
+    #loc_           --  The locations (analogous to means for a Gaussian) of the components.
+    #                   Shape is K x D for K components, D dimensions.
+    #scale_         --  The scale matrices (analogous to covariance for a Gaussian).
+    #                   Shape is D x D x K for D dimensions, K components.
+    #scale_cholesky_    --  The cholesky decomposition of the scale matrices.
+    #                   Shape is D x D x K for D dimensions, K components.
+    #scale_inv_cholesky_    --  The cholesky decomposition of the inverse of the scale matrices.
+    #                   Shape is D x D x K for D dimensions, K components.
+    #df_            --  The degrees of freedom. Shape is K for K components.
     def Mstep(self, X, resp, E_gamma, scale_, scale_cholesky_, df_,
                 scale_inv_cholesky_):
         mix_weights_ = np.mean(resp, axis=0)
@@ -341,8 +421,8 @@ class FiniteStudentMixture():
 
 
     #Calculates the squared mahalanobis distance for X to all components. Returns an
-    #array of dim N x K for N datapoints, K mixture components. We use the cholesky
-    #decomposition of the precision matrix to avoid having to invert anything.
+    #array of dim N x K for N datapoints, K mixture components containing the squared
+    #mahalanobis distance from each datapoint to each component.
     def vectorized_sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
         sq_maha_dist = np.empty((X.shape[0], self.n_components))
         y1 = np.matmul(X, np.transpose(scale_inv_cholesky_, (2,0,1)))
@@ -358,9 +438,8 @@ class FiniteStudentMixture():
         return scale_inv_cholesky_
 
 
-    #Calculates log p(X | theta) using the mixture components formulated as 
-    #multivariate t-distributions (for specific steps in the algorithm it 
-    #is preferable to formulate each component as a Gaussian scale mixture).
+    #Calculates log p(X | theta) where theta is the current set of parameters but does
+    #not apply mixture weights.
     #The function returns an array of dim N x K for N datapoints, K mixture components.
     #It expects to receive the squared mahalanobis distance and the model 
     #parameters (since during model fitting these are still being updated).
@@ -381,15 +460,53 @@ class FiniteStudentMixture():
         return -scale_logdet[np.newaxis,:] + const_term[np.newaxis,:] + sq_maha_dist
     
 
-    #We initialize parameters using a modified kmeans++ algorithm, whereby
-    #cluster centers are chosen and each datapoint is given a hard
-    #assignment to the cluster
-    #with the closest center to get the starting locations.
-    def initialize_params(self, X, random_seed):
-        np.random.seed(random_seed)
-        loc_ = [X[np.random.randint(0, X.shape[0]-1), :]]
+    #Initializes the model parameters. Two approaches are available for initializing
+    #the location (analogous to mean of a Gaussian): k++ and kmeans. THe scale is
+    #always initialized using a broad value (the covariance of the full dataset + reg_covar)
+    #for all components, while mixture_weights are always initialized to be equal for all
+    #components, and df is set to the starting value. All initialized parameters are 
+    #returned to caller.
+    def initialize_params(self, X, random_seed, init_type):
+        #We set loc_ to starting values using the k++ algorithm. If the user
+        #selected kmeans as their preferred initialization, we then update and refine
+        #the loc_values generated by k++ using kmeans.
+        loc_ = self.kplusplus_initialization(X, random_seed)
+        if init_type == "kmeans":
+            loc_ = self.kmeans_initialization(X, loc_)
+        
         mix_weights_ = np.empty(self.n_components)
         mix_weights_.fill(1/self.n_components)
+
+        #Set all scale matrices to a broad default -- the covariance of the data.
+        default_scale_matrix = np.cov(X, rowvar=False)
+        default_scale_matrix.flat[::X.shape[1] + 1] += self.reg_covar
+
+        #For 1-d data, ensure default scale matrix has correct shape.
+        if len(default_scale_matrix.shape) < 2:
+            default_scale_matrix = default_scale_matrix.reshape(-1,1)
+        scale_ = np.stack([default_scale_matrix for i in range(self.n_components)],
+                        axis=-1)
+        scale_cholesky_ = [np.linalg.cholesky(scale_[:,:,i]) for i in range(self.n_components)]
+        scale_cholesky_ = np.stack(scale_cholesky_, axis=-1)
+        scale_inv_cholesky_ = np.empty_like(scale_cholesky_)
+        scale_inv_cholesky_ = self.get_scale_inv_cholesky(scale_cholesky_,
+                            scale_inv_cholesky_)
+
+        return loc_, scale_, mix_weights_, scale_cholesky_, scale_inv_cholesky_
+
+
+
+    #The first option for initializing loc_ is k++, a modified version of the
+    #kmeans++ algorithm. (This is also used to get starting points for kmeans if
+    #the user selects kmeans to initialize loc_.)
+    #On each iteration (until we have reached n_components,
+    #a new cluster center is chosen randomly with a probability for each datapoint
+    #inversely proportional to its smallest distance to any existing cluster center.
+    #This tends to ensure that starting cluster centers are widely spread out. This
+    #algorithm originated with Arthur and Vassilvitskii (2007).
+    def kplusplus_initialization(self, X, random_seed):
+        np.random.seed(random_seed)
+        loc_ = [X[np.random.randint(0, X.shape[0]-1), :]]
         dist_arr_list = []
         for i in range(1, self.n_components):
             dist_arr = np.sum((X - loc_[i-1])**2, axis=1)
@@ -399,15 +516,42 @@ class FiniteStudentMixture():
             min_dist = min_dist / np.sum(min_dist)
             next_center_id = np.random.choice(distmat.shape[0], size=1, p=min_dist)
             loc_.append(X[next_center_id[0],:])
+        return np.stack(loc_)
 
-        loc_ = np.stack(loc_)
-        #For initialization, set all covariance matrices to I.
-        scale_ = [np.eye(X.shape[1]) for i in range(self.n_components)]
-        scale_ = np.stack(scale_, axis=-1)
-        scale_cholesky_ = np.copy(scale_)
-        scale_inv_cholesky_ = np.copy(scale_)
-        return loc_, scale_, mix_weights_, scale_cholesky_, scale_inv_cholesky_
 
+
+    #The second alternative for initializing loc_is kmeans clustering. It takes as
+    #input the data X (NxD for N datapoints, D dimensions) and as a starting point
+    #loc_ returned by self.kplusplus_initialization (KxD for K components, D dimensions).
+    #This is a simple initialization of Lloyd's algorithm for kmeans; by rolling our
+    #own, we avoid the need to include scikitlearn as a dependency. (I anticipate that
+    #k++ will be a more popular choice for initialization anyway, since clustering via
+    #kmeans then via re-clustering via a mixture model is redundant even if admittedly
+    #it is sometimes useful).
+    def kmeans_initialization(self, X, loc_):
+        clust_ids = np.empty_like(X)
+        X = X[:,:,np.newaxis]
+        loc_ = loc_.T[np.newaxis,:,:]
+        #Notice that we use the same parameter (self.max_iter) to govern the maximum
+        #number of iterations for overall model fitting and also for kmeans initialization
+        #AND df_ optimization. This seems better than having the user specify a separate
+        #maximum for each, although there might be some fairly rare use cases where that
+        #would be preferable.
+        prior_loc_ = np.copy(loc_)
+        for i in range(self.max_iter):
+            dist_array = np.sum((X - loc_)**2, axis=1)
+            clust_ids = np.argmax(dist_array, axis=1)
+            loc_ = [np.mean(np.take(X, clust_ids == i, axis=0), axis=0).flatten() for
+                    i in range(self.n_components)]
+            loc_ = np.stack(loc_, axis=1)[np.newaxis,:,:]
+            #We use a hard-coded tol of 1e-4 for this procedure, which is fairly generous
+            #and should allow fast convergence. We just need an approximate starting point
+            #since the mixture fit should refine this substantially.
+            loc_shift = np.linalg.norm(loc_ - prior_loc_, axis=1)
+            if np.max(loc_shift) < 1e-4:
+                break
+            prior_loc_ = np.copy(loc_)
+        return np.squeeze(loc_, axis=0).T
 
 
 
