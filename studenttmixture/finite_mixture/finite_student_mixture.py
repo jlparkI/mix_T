@@ -20,38 +20,38 @@ from scipy.optimize import newton
 #approach, use the variational model instead.
 #
 #INPUTS:
-#n_components -- the number of components in the mixture
-#tol          -- if the change in the lower bound between iterations is less than tol, 
-#                this restart has converged
-#reg_covar    -- a value added to the diagonal of all scale matrices to provide 
-#                regularization and ensure they are positive definite
-#max_iter     -- the maximum number of iterations per restart before we just assume
-#                this restart simply didn't converge. Set this number low enough
-#                that if the model isn't converging we stop instead of trying forever,
-#                but high enough to give the model the iterations needed to find a good
-#                solution.
-#n_init       -- the maximum number of fitting restarts. EM finds a local maximum
-#                so more restarts increases our chances of finding an optimal solution
-#                but increases computational cost.
-#fixed_df     -- a boolean indicating whether df should be optimized or "fixed" to the
-#                user-specified value.
-#random_state -- Seed to the random number generator to ensure restarts are reproducible.
-#verbose      -- Print updates to keep user updated on fitting.
+#n_components   --  the number of components in the mixture
+#tol            --  if the change in the lower bound between iterations is less than tol, 
+#                   this restart has converged
+#reg_covar      --  a value added to the diagonal of all scale matrices to provide 
+#                   regularization and ensure they are positive definite
+#max_iter       --  the maximum number of iterations per restart before we just assume
+#                   this restart simply didn't converge. Set this number low enough
+#                   that if the model isn't converging we stop instead of trying forever,
+#                   but high enough to give the model the iterations needed to find a good
+#                   solution.
+#n_init         --  the maximum number of fitting restarts. EM finds a local maximum
+#                   so more restarts increases our chances of finding an optimal solution
+#                   but increases computational cost.
+#fixed_df       --  a boolean indicating whether df should be optimized or "fixed" to the
+#                   user-specified value.
+#random_state   --  Seed to the random number generator to ensure restarts are reproducible.
+#verbose        --  Print updates to keep user updated on fitting.
 
 #PARAMETERS FROM FIT:
-#mix_weights  -- The mixture weights for each component of the mixture; sums to one.
-#loc_         -- Equivalent of mean for a gaussian; the center of each component's 
-#                distribution. For a student's t distribution, this is called the "location"
-#                not the mean. Shape is K x D for K components, D dimensions.
-#scale_       -- Equivalent of covariance for a gaussian. Shape is D x D x K for D dimensions,
-#                K components.
+#mix_weights    --  The mixture weights for each component of the mixture; sums to one.
+#location_      --  Equivalent of mean for a gaussian; the center of each component's 
+#                   distribution. For a student's t distribution, this is called the "location"
+#                   not the mean. Shape is K x D for K components, D dimensions.
+#scale_         --  Equivalent of covariance for a gaussian. Shape is D x D x K for D dimensions,
+#                   K components.
 #scale_cholesky_ -- The cholesky decomposition of the scale matrix. Shape is D x D x K.
 #scale_inv_cholesky_ -- Equivalent to the cholesky decomposition of the precision matrix (inverse
 #                       of the scale matrix). Shape is D x D x K. 
-#df_          -- The degrees of freedom parameter of each student's t distribution. 
-#                Shape is K for K components. User can either specify a fixed value or
-#                allow algorithm to optimize.
-#converged_   -- Whether the fit converged.
+#df_            --  The degrees of freedom parameter of each student's t distribution. 
+#                   Shape is K for K components. User can either specify a fixed value or
+#                   allow algorithm to optimize.
+#converged_     --  Whether the fit converged.
 
 class FiniteStudentMixture():
 
@@ -77,7 +77,7 @@ class FiniteStudentMixture():
         #The model fit parameters are all initialized to None and will be set 
         #if / when a model is fitted.
         self.mix_weights_ = None
-        self.loc_ = None
+        self.location_ = None
         self.scale_ = None
         self.scale_cholesky_ = None
         self.scale_inv_cholesky_ = None
@@ -201,7 +201,7 @@ class FiniteStudentMixture():
             #parameters.
             elif lower_bound > best_lower_bound:
                 best_lower_bound = lower_bound
-                self.df_, self.loc_, self.scale_ = df_, loc_, scale_
+                self.df_, self.location_, self.scale_ = df_, loc_, scale_
                 self.scale_inv_cholesky_ = scale_inv_cholesky_
                 self.scale_cholesky_ = scale_cholesky_
                 self.mix_weights_ = mix_weights_
@@ -599,22 +599,26 @@ class FiniteStudentMixture():
 
     #Gets the locations for the fitted mixture model. self.check_model ensures
     #model has been fitted and will raise a value error if it hasn't.
-    def get_cluster_centers(self):
+    @property
+    def location(self):
         self.check_model()
-        return self.loc_
+        return self.location_
 
     #Gets the scale matrices for the fitted mixture model.
-    def get_cluster_scales(self):
+    @property
+    def scale(self):
         self.check_model()
         return self.scale_
 
     #Gets the mixture weights for a fitted model.
-    def get_weights(self):
+    @property
+    def mix_weights(self):
         self.check_model()
         return self.mix_weights_
 
     #Gets the degrees of freedom for the fitted mixture model.
-    def get_df(self):
+    @property
+    def df(self):
         self.check_model()
         return self.df_
 
@@ -641,7 +645,7 @@ class FiniteStudentMixture():
     #Returns log p(X | theta) + log mix_weights. This is called by other class
     #functions which check before calling it that the model has been fitted.
     def get_weighted_loglik(self, X):
-        sq_maha_dist = self.sq_maha_distance(X, self.loc_, self.scale_inv_cholesky_)
+        sq_maha_dist = self.sq_maha_distance(X, self.location_, self.scale_inv_cholesky_)
         loglik = self.get_loglikelihood(X, sq_maha_dist, self.df_, self.scale_cholesky_,
                         self.mix_weights_)
         return loglik + np.log(self.mix_weights_)[np.newaxis,:]
@@ -661,7 +665,7 @@ class FiniteStudentMixture():
     #treated as a parameter if df is not fixed. This function is only used by AIC and BIC
     #which check whether the model has been fitted first so no need to check here.
     def get_num_parameters(self):
-        num_parameters = self.mix_weights_.shape[0] + self.loc_.shape[0] * self.loc_.shape[1]
+        num_parameters = self.mix_weights_.shape[0] + self.location_.shape[0] * self.location_.shape[1]
         num_parameters += 0.5 * self.scale_.shape[0] * (self.scale_.shape[1] + 1) * self.scale_.shape[2]
         if self.fixed_df:
             return num_parameters
@@ -672,7 +676,7 @@ class FiniteStudentMixture():
 
     #Returns the dimensionality of the training data.
     def get_data_dim(self):
-        if self.loc_ is None:
+        if self.location_ is None:
             raise ValueError("The model has not been fitted successfully yet! no "
                             "parameters have been saved.")
-        return self.loc_.shape[1]
+        return self.location_.shape[1]
