@@ -6,7 +6,7 @@ with open("README.md", "r") as fhandle:
 
 setup(
         name="studenttmixture",
-        version="0.0.1.3",
+        version="0.0.1.4",
         packages=find_packages(),
         author="Jonathan Parkinson",
         author_email="jlparkinson1@gmail.com",

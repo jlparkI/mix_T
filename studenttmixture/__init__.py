@@ -1,1 +1,1 @@
-from studenttmixture import finite_mixture
+from .em_student_mixture import EMStudentMixture

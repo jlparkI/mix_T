@@ -15,8 +15,8 @@ from scipy.optimize import newton
 #################################################################################
 
 #This class is used to fit a finite student's t mixture using the EM algorithm (see
-#documentation for usage, derivation of update equations). EM is a maximum likelihood
-#approach so we get a point estimate and do not require a prior. For a more Bayesian
+#documentation for usage). EM is a maximum likelihood
+#approach so we get a point estimate and do not require a prior. For a Bayesian
 #approach, use the variational model instead.
 #
 #INPUTS:
@@ -53,7 +53,7 @@ from scipy.optimize import newton
 #                   allow algorithm to optimize.
 #converged_     --  Whether the fit converged.
 
-class FiniteStudentMixture():
+class EMStudentMixture():
 
     def __init__(self, n_components = 2, tol=1e-5,
             reg_covar=1e-06, max_iter=1000, n_init=1,
@@ -119,11 +119,14 @@ class FiniteStudentMixture():
             raise ValueError("init_type must be one of either 'k++' or 'kmeans'.")
 
 
-    #Function to check whether the input has the correct dimensionality.
+    #Function to check whether the input has the correct dimensionality. This function is
+    #used to check data supplied to self.predict, NOT fitting data, and assumes the model
+    #has already been fitted -- it compares the dimensionality of the input to the dimensionality
+    #of training data. To check training data for validity, self.check_fitting_data is used instead.
     def check_inputs(self, X):
         if isinstance(X, np.ndarray) == False:
             raise ValueError("X must be a numpy array.")
-        #Check first whether model has been fitted. If not, model_core will be None.
+        #Check first whether model has been fitted.
         self.check_model()
         if X.dtype != "float64":
             raise ValueError("The input array should be of type float64.")
@@ -132,11 +135,11 @@ class FiniteStudentMixture():
         x = X
         if len(x.shape) == 1:
             x = x.reshape(-1,1)
-        if x.shape[1] != self.get_data_dim():
+        if x.shape[1] != self.location_.shape[1]:
             raise ValueError("Dimension of data passed does not match "
                     "dimension of data used to fit the model! The "
                     "data used to fit the model has D=%s"
-                    %self.model_core.get_data_dim())
+                    %self.location_.shape[1])
         return x
 
 
@@ -252,7 +255,7 @@ class FiniteStudentMixture():
             #always true. However, in the event that for some reason specific to some
             #unusual dataset it does not, we do not want to generate what might from the user's
             #perspective be a rather mystifying error, so we use abs(change) rather than 
-            #change and do not check the sign. scikitlearn's gaussian mixture does the same!
+            #change. scikitlearn's gaussian mixture does the same!
             if abs(change) < self.tol:
                 convergence = True
                 break
@@ -301,7 +304,7 @@ class FiniteStudentMixture():
 
 
 
-    #The M-step in mixture fitting. Updates the model parameters using the "hidden variable"
+    #The M-step in mixture fitting. Updates the component parameters using the "hidden variable"
     #values calculated in the E-step.
     #
     #INPUTS
@@ -336,7 +339,7 @@ class FiniteStudentMixture():
         loc_ = np.dot((ru).T, X)
         resp_sum = np.sum(ru, axis=0) + 10 * np.finfo(resp.dtype).eps
         loc_ = loc_ / resp_sum[:,np.newaxis]
-        for i in range(mix_weights_.shape[0]):
+        for i in range(self.n_components):
             scaled_x = X - loc_[i,:][np.newaxis,:]
             scale_[:,:,i] = np.dot((ru[:,i:i+1] * scaled_x).T,
                             scaled_x) / resp_sum[i]
@@ -373,9 +376,9 @@ class FiniteStudentMixture():
             #It may occasionally happen that newton does not converge, usually
             #if the user has set a very small value for max_iter, which is used both
             #for the maximum number of iterations per restart AND for the max
-            #number of iterations per newton raphson optimization. If so, we
-            #keep the existing value. (Alternatively could raise a value error...but
-            #may be better to simply proceed with the existing value in this situation).
+            #number of iterations per newton raphson optimization, or because
+            #df is going to infinity, because the distribution is very close to 
+            #normal. If it doesn't converge, keep the last estimated value.
             if math.isnan(df_[i]) == False:
                 df_[i] = optimal_df
             #DF should never be less than 1 but can go arbitrarily high.
@@ -604,11 +607,21 @@ class FiniteStudentMixture():
         self.check_model()
         return self.location_
 
+    #Setter for the location attribute.
+    @location.setter
+    def location(self, user_assigned_location):
+        self.location_ = user_assigned_location
+
     #Gets the scale matrices for the fitted mixture model.
     @property
     def scale(self):
         self.check_model()
         return self.scale_
+
+    #Setter for the scale attribute.
+    @scale.setter
+    def scale(self, user_assigned_scale):
+        self.scale_ = user_assigned_scale
 
     #Gets the mixture weights for a fitted model.
     @property
@@ -616,11 +629,21 @@ class FiniteStudentMixture():
         self.check_model()
         return self.mix_weights_
 
+    #Setter for the mix weights.
+    @mix_weights.setter
+    def mix_weights(self, user_assigned_weights):
+        self.mix_weights_ = user_assigned_weights
+
     #Gets the degrees of freedom for the fitted mixture model.
     @property
-    def df(self):
+    def degrees_of_freedom(self):
         self.check_model()
         return self.df_
+
+    #Setter for the degrees of freedom.
+    @degrees_of_freedom.setter
+    def degrees_of_freedom(self, user_assigned_df):
+        self.df_ = user_assigned_df
 
     #Returns the Akaike information criterion (AIC) for the input dataset.
     #Useful in selecting the number of components.
@@ -639,7 +662,7 @@ class FiniteStudentMixture():
         x = self.check_inputs(X)
         score = self.score(x, perform_model_checks = False)
         n_params = self.get_num_parameters()
-        return 2 * n_params * np.log(x.shape[0]) - 2 * score * x.shape[0]
+        return n_params * np.log(x.shape[0]) - 2 * score * x.shape[0]
 
 
     #Returns log p(X | theta) + log mix_weights. This is called by other class
@@ -665,7 +688,7 @@ class FiniteStudentMixture():
     #treated as a parameter if df is not fixed. This function is only used by AIC and BIC
     #which check whether the model has been fitted first so no need to check here.
     def get_num_parameters(self):
-        num_parameters = self.mix_weights_.shape[0] + self.location_.shape[0] * self.location_.shape[1]
+        num_parameters = self.n_components - 1 + self.n_components * self.location_.shape[1]
         num_parameters += 0.5 * self.scale_.shape[0] * (self.scale_.shape[1] + 1) * self.scale_.shape[2]
         if self.fixed_df:
             return num_parameters
@@ -673,10 +696,16 @@ class FiniteStudentMixture():
             return num_parameters + self.df_.shape[0]
 
 
+    #Samples from the fitted model with a user-supplied random seed. (It is important not to
+    #use the random seed saved as self.random_state because the user may want to easily update
+    #the random seed when sampling, depending on their needs.)
+    def sample(self, num_samples = 1, random_seed = 123):
+        if num_samples < 1:
+            raise ValueError("You can't generate less than one sample!")
+        self.check_model()
+        rng = np.random.RandomState(random_seed)
+        samples_per_component = rng.multinomial(n=num_samples, pvals=self.mix_weights_)
+        sample_data = []
+        for i in range(self.n_components):
+            pass
 
-    #Returns the dimensionality of the training data.
-    def get_data_dim(self):
-        if self.location_ is None:
-            raise ValueError("The model has not been fitted successfully yet! no "
-                            "parameters have been saved.")
-        return self.location_.shape[1]

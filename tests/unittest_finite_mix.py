@@ -1,6 +1,8 @@
-import unittest, numpy as np, scipy
+import unittest, numpy as np, scipy, sys
 from scipy import stats, spatial
-from finite_student_mixture import FiniteStudentMixture
+sys.path.append("..")
+import studenttmixture
+from studenttmixture.em_student_mixture import EMStudentMixture
 
 
 class TestCoreProbabilityFunctions(unittest.TestCase):
@@ -34,7 +36,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
                     df=4, size=500) for i in range(3)]
         samples = np.vstack(samples)
         #We set a low value for tol to get the fit as "tight" as possible.
-        FiniteMix = FiniteStudentMixture(fixed_df=False, random_state=123,
+        FiniteMix = EMStudentMixture(fixed_df=False, random_state=123,
                 n_components=3, max_iter=1500, tol=1e-7, init_type="k++")
         FiniteMix.fit(samples)
 
@@ -44,7 +46,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         idx = np.argsort(fit_loc[:,0])
         fit_loc = fit_loc[idx,:]
         fit_cov = FiniteMix.scale[:,:,idx]
-        fit_df = FiniteMix.df[idx]
+        fit_df = FiniteMix.degrees_of_freedom[idx]
         fit_mix_weights = FiniteMix.mix_weights
 
         print("For a three cluster toy dataset in a 3d space...")
@@ -54,8 +56,8 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         true_loc_norm = np.linalg.norm(true_loc, axis=1)
         location_outcome = np.max(location_distance / true_loc_norm) < 0.02
 
-        print("Is the distance from the fit locations to the true locations "
-                "< 2 percent of the norm of the true locations? %s"%location_outcome)
+        print("Is distance from fit locations to true locations "
+                "< 2 percent of the norm of true locations? %s"%location_outcome)
         
         mix_weight_abs_error = np.max(np.abs(fit_mix_weights - 0.33))
         mix_weight_outcome = mix_weight_abs_error < 0.02
@@ -87,11 +89,11 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
 
 
     #Generate an arbitrary t-distribution using scipy's t-distribution function,
-    #sample from it and ensure the probabilities calculated by FiniteStudentMixture
+    #sample from it and ensure the probabilities calculated by EMStudentMixture
     #are identical.
     def test_log_likelihood_calculation(self):
         print("*********************")
-        FiniteMix = FiniteStudentMixture()
+        FiniteMix = EMStudentMixture()
         #An arbitrary scale matrix...
         covmat = np.asarray([[0.025, 0.0075, 0.00175],
                             [0.0075, 0.0070, 0.00135],
@@ -123,7 +125,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
                     FiniteMix.scale_cholesky_, FiniteMix.mix_weights_).flatten()
         outcome = np.allclose(true_loglik, loglik)
         print("Does scipy's multivariate t logpdf match "
-                "the FiniteMixture get_loglikelihood function? %s"%outcome)
+                "the EMStudentMixture get_loglikelihood function? %s"%outcome)
         self.assertTrue(outcome)
 
         print('\n')
@@ -138,7 +140,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         print("*********************")
         np.random.seed(123)
         X = np.random.uniform(low=-10,high=10,size=(250,3))
-        FiniteMix = FiniteStudentMixture()
+        FiniteMix = EMStudentMixture()
         #Arbitrary scale matrices...
         covmat1 = np.asarray([[0.025, 0.0075, 0.00175],
                             [0.0075, 0.0070, 0.00135],
@@ -166,7 +168,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
                             scale_inv2)**2
         outcome = np.allclose(finite_mix_dist, true_dist)
         print("Does scipy's mahalanobis match "
-                "the FiniteMixture vectorized_sq_maha_distance function? %s"%outcome)
+                "the EMStudentMixture vectorized_sq_maha_distance function? %s"%outcome)
         self.assertTrue(outcome)
         print('\n')
 
