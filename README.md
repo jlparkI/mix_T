@@ -29,8 +29,8 @@ Unittests for the package are in the tests folder.
 
 ### Usage
 
-- [StudentMixture](https://github.com/jlparkI/mix_T/blob/main/Documentation/Finite_Mixture_Docs.md)<br>
-- [BayesianStudentMixture (coming soon)](https://github.com/jlparkI/mix_T/blob/main/Documentation/Variational_Mixture_Docs.md)<br>
+- [EMStudentMixture](https://github.com/jlparkI/mix_T/blob/main/Documentation/Finite_Mixture_Docs.md)<br>
+- [VariationalStudentMixture (coming soon)](https://github.com/jlparkI/mix_T/blob/main/Documentation/Variational_Mixture_Docs.md)<br>
 - [Student's T mixture modeling user guide](https://github.com/jlparkI/mix_T/blob/main/Documentation/Tutorial.md)<br>
 
 

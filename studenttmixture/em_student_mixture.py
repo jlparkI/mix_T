@@ -551,7 +551,7 @@ class EMStudentMixture():
             #and should allow fast convergence. We just need an approximate starting point
             #since the mixture fit should refine this substantially.
             loc_shift = np.linalg.norm(loc_ - prior_loc_, axis=1)
-            if np.max(loc_shift) < 1e-4:
+            if np.max(loc_shift) < 1e-3:
                 break
             prior_loc_ = np.copy(loc_)
         return np.squeeze(loc_, axis=0).T
