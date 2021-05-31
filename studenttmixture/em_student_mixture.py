@@ -221,7 +221,7 @@ class EMStudentMixture():
     #                   each row is a datapoint. The caller (self.fit) ensures this is true.
     #random_state   --  The seed for the random number generator.
     #
-    #OUTPUTS        
+    #RETURNED PARAMETERS        
     #current_bound  --  The lower bound for the current fitting iteration. The caller (self.fit)
     #                   keeps the set of parameters that have the best associated lower bound.
     #convergence    --  A boolean indicating convergence or lack thereof.
@@ -281,7 +281,7 @@ class EMStudentMixture():
     #                   Shape is D x D x K for D dimensions, K components.
     #mix_weights_   --  The mixture weights. Shape is K for K components.
     #
-    #OUTPUTS
+    #RETURNED PARAMETERS
     #resp           --  The responsibilities of each component for each datapoint.
     #                   Shape is N x K (N datapoints, K components).
     #E_gamma        --  The ML estimate of the "hidden variable" described by 
@@ -321,7 +321,7 @@ class EMStudentMixture():
     #df_            --  The degrees of freedom. Shape is K for K components.
     #scale_inv_cholesky_    --  The cholesky decomposition of the inverse of the scale matrices.
     #                   Shape is D x D x K for D dimensions, K components.
-    #OUTPUTS
+    #RETURNED PARAMETERS
     #mix_weights_   --  The mixture weights. SHape is K for K components.
     #loc_           --  The locations (analogous to means for a Gaussian) of the components.
     #                   Shape is K x D for K components, D dimensions.
@@ -699,6 +699,12 @@ class EMStudentMixture():
     #Samples from the fitted model with a user-supplied random seed. (It is important not to
     #use the random seed saved as self.random_state because the user may want to easily update
     #the random seed when sampling, depending on their needs.)
+    #We sample from the multinomial distribution described by the mixture weights to
+    #determine the number of datapoints per component. Next, we sample from the
+    #chisquare distribution (a chisquare is a special case of a gamma, and remember
+    #that student's t distributions can be described as an infinite scale mixture
+    #of Gaussians). Finally, we sample from a standard normal and shift using
+    #the location and the sample from the chisquare distribution.
     def sample(self, num_samples = 1, random_seed = 123):
         if num_samples < 1:
             raise ValueError("You can't generate less than one sample!")
@@ -707,5 +713,12 @@ class EMStudentMixture():
         samples_per_component = rng.multinomial(n=num_samples, pvals=self.mix_weights_)
         sample_data = []
         for i in range(self.n_components):
-            pass
+            if np.isinf(self.df_[i]):
+                x = 1.0
+            else:
+                x = rng.chisquare(self.df_[i], size=samples_per_component[i])
+            comp_sample = rng.multivariate_normal(np.zeros(self.location_.shape[1]),
+                            self.scale_[:,:,i], size=samples_per_component[i])
+            sample_data.append(self.location_[i,:] + comp_sample / np.sqrt(x)[:,np.newaxis])
+        return np.vstack(sample_data)
 

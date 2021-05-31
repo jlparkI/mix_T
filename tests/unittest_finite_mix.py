@@ -67,7 +67,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         fit_df_outcome = fit_df_error < 0.5
         print("Are the estimated degrees of freedom all between 3.5 and 4.5? %s"%fit_df_outcome)
         
-        #Last but not least, we check the covariance matrices. This is a little
+        #Next we check the covariance matrices. This is a little
         #tricky but to try to keep this simple we use Herdin (2005)'s approach
         #to estimating distance and require that distance be smaller than a
         #threshold.
@@ -83,7 +83,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         self.assertTrue(location_outcome)
         self.assertTrue(fit_df_outcome)
         self.assertTrue(cov_outcome)
-
+        
         print('\n')
    
 
@@ -171,6 +171,78 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
                 "the EMStudentMixture vectorized_sq_maha_distance function? %s"%outcome)
         self.assertTrue(outcome)
         print('\n')
+
+
+
+
+    #Test the sampling procedure by sampling from a prespecified distribution,
+    #then fitting a single component model. If all is well, the model fit's
+    #parameters should be very similar to those used for sampling.
+    def test_sampling_students_t(self):
+        print("*********************")
+        #Arbitrary scale matrix...
+        true_cov = [np.asarray([[1.6, 0.0, 0.0],
+                            [0.0, 4.5, 0.0],
+                            [0.0, 0.0, 3.2]])]
+        true_cov = np.stack(true_cov, axis=-1)
+        #Arbitrary locations...
+        true_loc = np.asarray([[4.5,3.6,7.2]])
+        TrueFiniteMix = EMStudentMixture()
+        chole_covmat = np.linalg.cholesky(true_cov[:,:,0])
+        chole_covmat = np.stack([chole_covmat], axis=-1)
+        chole_inv_cov = np.empty((3,3,2))
+        chole_inv_cov = TrueFiniteMix.get_scale_inv_cholesky(chole_covmat, chole_inv_cov)
+        #Set up FiniteMix using the parameters of the distribution.
+        TrueFiniteMix.location_ = true_loc
+        TrueFiniteMix.scale_ = true_cov
+        TrueFiniteMix.scale_cholesky_ = chole_covmat
+        TrueFiniteMix.scale_inv_cholesky_ = chole_inv_cov
+        TrueFiniteMix.df_ = np.asarray([4.0])
+        TrueFiniteMix.mix_weights_ = np.asarray([1.0])
+        TrueFiniteMix.converged_ = True
+        TrueFiniteMix.n_components = 1
+        x = TrueFiniteMix.sample(num_samples=500, random_seed=123)
+        
+        FittedFiniteMix = EMStudentMixture(fixed_df=False, random_state=123,
+                n_components=1, max_iter=1500, tol=1e-7, init_type="k++")
+        FittedFiniteMix.fit(x)
+
+        #Retrieve the fit parameters. They should be very close to the true ones.
+        fit_loc = FittedFiniteMix.location.flatten()
+        fit_cov = FittedFiniteMix.scale[:,:,0]
+        fit_df = FittedFiniteMix.degrees_of_freedom[0]
+        
+        print("If 500 samples are drawn from a EMStudentMixture with known "
+        "arbitrary location...")
+        #For location, distance from fit location to true location should be 
+        #less than 1% of the norm of the true location.
+        location_distance = np.linalg.norm(fit_loc - true_loc, axis=1)[0]
+        true_loc_norm = np.linalg.norm(true_loc, axis=1)[0]
+        location_outcome = (location_distance / true_loc_norm) < 0.02
+
+        print("Is distance from fit location to true location "
+                "< 2 percent of the norm of true location? %s"%location_outcome)
+        
+        fit_df_error = np.max(np.abs(fit_df - 4))
+        fit_df_outcome = fit_df_error < 0.5
+        print("Are the estimated degrees of freedom between 3.5 and 4.5? %s"%fit_df_outcome)
+        
+        #Last but not least, we check the covariance matrices. This is a little
+        #tricky but to try to keep this simple we use Herdin (2005)'s approach
+        #to estimating distance and require that distance be smaller than a
+        cov_mat_sim = (np.trace(np.dot(true_cov[:,:,0], fit_cov)) / 
+                    (np.linalg.norm(true_cov[:,:,0]) * np.linalg.norm(fit_cov)))
+        cov_mat_dist = 1 - cov_mat_sim
+        cov_outcome = (cov_mat_dist) < 0.01
+        print("Is the covariance matrix distance < 0.01? %s"%cov_outcome)
+
+        self.assertTrue(location_outcome)
+        self.assertTrue(fit_df_outcome)
+        self.assertTrue(cov_outcome)
+
+        print('\n')
+
+
 
 
 if __name__ == "__main__":
