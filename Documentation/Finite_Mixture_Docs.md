@@ -10,7 +10,7 @@ EMStudentMixture
 import studenttmixture
 from studenttmixture import EMStudentMixture
 
-EMStudentMixture(n_components=2, tol=1e-3,
+EMStudentMixture(n_components=2, tol=1e-5,
 reg_covar=1e-6, max_iter=1000, n_init=1, df=4, fixed_df=True,
 random_state=123, verbose=False, init_type="k++")
 ```
@@ -35,9 +35,7 @@ convergence.
   * *verbose*<br>Whether to print the lower bound and change in lower bound during fitting.
   * *init_type*<br>Must be one of "k++" or "kmeans". If "k++", the component locations are initialized
 the KMeans++ procedure described by Arthur and Vassilvitskii (2007), which generally gives reasonably good
-starting locations. If "kmeans", these starting locations are further refined using kmeans clustering. This is
-slower because now the data is clustered twice -- first using kmeans to get starting points, then again using
-EM -- and often does not give a huge advantage over k++, but in some situations it may be more effective.
+starting locations. If "kmeans", these starting locations are further refined using kmeans clustering.
 
 
 ### Attributes
@@ -111,7 +109,7 @@ plt.show()
 #We can optimize df later once we have selected the number of clusters.
 aics, bics = [], []
 for ncomp in range(2,10):
-    mix_model = FiniteStudentMixture(n_components=ncomp, fixed_df=True, df=1.0)
+    mix_model = EMStudentMixture(n_components=ncomp, fixed_df=True, df=1.0)
     mix_model.fit(x)
     aics.append(mix_model.aic(x))
     bics.append(mix_model.bic(x))
@@ -127,15 +125,15 @@ plt.xlabel("Num clusters")
 ![bic_aic](https://github.com/jlparkI/mix_T/blob/main/Documentation/AIC_BIC.png)
 
 ```python
-#We fit both scikitlearn's Gaussian mixture and the FiniteStudentMixture using 3 clusters and 
+#We fit both scikitlearn's Gaussian mixture and the EMStudentMixture using 3 clusters and 
 #compare the results.
 from sklearn.mixture import GaussianMixture as GMM
 gm = GMM(n_components=3, n_init=5, random_state=11)
-stm = FiniteStudentMixture(n_components=3, n_init=5, fixed_df=False, df=1, random_state=11)
+stm = EMStudentMixture(n_components=3, n_init=5, fixed_df=False, df=1, random_state=11)
 gm.fit(x)
 stm.fit(x)
 plt.scatter(x[:,0], x[:,1], s=10, label="raw data")
-stm_clusters = stm.get_cluster_centers()
+stm_clusters = stm.location
 plt.scatter(gm.means_[:,0], gm.means_[:,1], color="red", marker="*", 
                 label="Gaussian mixture", alpha=0.5, s=100)
 plt.scatter(stm_clusters[:,0], stm_clusters[:,1], color="black", marker="X",
