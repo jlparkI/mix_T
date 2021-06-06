@@ -323,14 +323,15 @@ class VariationalStudentMixture():
     #from the formulation of a student's t distribution as a
     #Gaussian mixture.
     #Params that are used: df_, E_resp, E_sq_maha_dist
-    #Params that are updated: E_gamma, E_log_gamma
+    #Params that are updated: E_gamma, E_log_gamma, a_nm, b_nm
     #a_nm and b_nm here refer to the parameters of a Gamma distribution,
     #i.e. G(u_nm | a_nm, b_nm)
     def update_u(self, X, params, hyperparams):
-        a_nm = params.df_[:,np.newaxis] + params.E_resp * X.shape[1]
-        b_nm = params.df_[:,np.newaxis] + params.E_resp * params.E_sq_maha_dist
-        params.E_gamma = a_nm / b_nm
-        params.E_log_gamma = digamma(0.5 * a_nm) - np.log(0.5 * b_nm) 
+        params.a_nm = 0.5 * (params.df_[:,np.newaxis] + params.E_resp * X.shape[1])
+        params.b_nm = 0.5 * (params.df_[:,np.newaxis] +
+                             params.E_resp * params.E_sq_maha_dist)
+        params.E_gamma = params.a_nm / params.b_nm
+        params.E_log_gamma = digamma(params.a_nm) - np.log(params.b_nm) 
         return params
 
     #Updates the scale_inv (inverse of the scale matrix) and associated expectations.
@@ -386,37 +387,81 @@ class VariationalStudentMixture():
     #unavoidably messy -- the variational lower bound has ten contributing terms,
     #and there's only so far that we can simplify it.
     def update_lower_bound(self, X, params, hyperparams):
+        #compute terms involving p(X | params)
         E_log_pX = params.E_logdet_scale_inv + X.shape[1] * params.E_log_gamma
         E_log_pX -= params.E_gamma * params.E_sq_maha_dist + X.shape[1] * np.log(2 * np.pi)
         E_log_pX *= params.E_resp
         E_log_pX = 0.5 * np.sum(E_log_pX)
 
-        E_log_p_loc = ___________________
+        #compute terms involving log p(loc_ | prior) and log q(loc_)
+        E_log_p_loc = -self.n_components * np.dot(hyperparams.loc_prior, hyperparams.loc_prior)
+        for i in range(self.n_components):
+            E_log_p_loc -= np.dot(params.loc_[i,:], params.loc_[i,:])
+            E_log_p_loc += 2 * np.dot(params.loc_[i,:], hyperparams.loc_prior)
+        E_log_p_loc *= 0.5 * hyperparams.mean_cov_prior  
+        #Numpy computes the log determinant using LU factorization, which is O(N^3).
+        #We leave a constant term off the end.
+        E_log_q_loc = [np.linalg.slogdet(params.R_adj_scale[:,:,i]) for i
+                       in range(self.n_components)]
+        E_log_q_loc = 0.5 * np.sum(E_log_q_loc)
+                       
 
-        E_log_p_scale_inv = 0
+        #Compute terms involving log p(scale_inv | prior) and log q(scale_inv_).
+        #The latter unfortunately requires calculation of the Wishart normalization
+        #constant, handled in a separate function.
+        updated_alpha = hyperparams.alpha_m + params.Nk
+        E_log_p_scale_inv, E_log_q_scale_inv = 0, 0
         for i in range(self.n_components):
             E_log_p_scale_inv += -0.5 * np.trace(np.matmul(hyperparams.wishart_scale_inv,
                                                           params.scale_inv_[:,:,i]))
             E_log_p_scale_inv += 0.5 * params.E_logdet_scale_inv * (hyperparams.wishart_dof
                                                                     - X.shape[1] - 1)
-
+            E_log_q_scale_inv += self.wishart_norm(params.scale_inv_chole_[:,:,i],
+                                                   updated_alpha[i])
+            E_log_q_scale_inv += 0.5 * (updated_alpha[i] - X.shape[1] - 1) * \
+                                 params.E_logdet_scale_inv[i]
+            E_log_q_scale_inv -= 0.5 * updated_alpha[i] * X.shape[1]
+            
+        #Calculate terms involving log p(u | df) and log q(u).
         adj_df = 0.5 * params.df_
         E_log_pGamma = (adj_df - 1)[:,np.newaxis] * params.E_log_gamma - \
                        adj_df[:,np.newaxis] * params.E_gamma
         E_log_pGamma = np.sum(E_log_pGamma) + np.sum(X.shape[0] * adj_df * np.log(adj_df)
                               - loggamma(adj_df))
-
+        E_log_qGamma = (params.a_nm - 1) * digamma(params.a_nm) - params.a_nm + \
+                       loggamma(params.a_nm) + np.log(params.b_nm)
+        E_log_qGamma = np.sum(E_log_qGamma)
+        
+        #Calculate terms involving log p(mixweights | prior) and log q(mixweights)
         alpha0 = hyperparams.alpha_m * self.n_components
-        updated_alpha = hyperparams.alpha_m + params.Nk
         E_log_pmixweights = np.sum((hyperparams.alpha_m - 1) * params.E_log_mixweights)
-
+        E_log_qmixweights = np.sum((updated_alpha - 1) * params.E_log_mixweights -
+                                   loggamma(updated_alpha))
+        E_log_qmixweights += loggamma(np.sum(updated_alpha))
+        
+        #Calculate terms involving log p(s | prior) and log q(s)
         E_log_presp = np.sum(params.E_resp * params.E_log_mixweights[:,np.newaxis])
+        E_log_qresp = np.sum(params.E_resp * np.log(params.E_resp))
 
-        
-        
-
+        #add it all up....
+        lower_bound = E_log_pX + E_log_p_loc + E_log_p_scale_inv + E_log_pGamma + \
+                      E_log_pmixweights + E_log_presp - E_log_q_loc - E_log_q_scale_inv - \
+                      E_log_qGamma - E_log_qmixweights - E_log_qresp
         return lower_bound
-    
+
+
+
+    #Gets the normalization term for the Wishart distribution (only required for 
+    #calculating the variational lower bound). The normalization term is calculated
+    #for one component only, so caller must loop over components to get the normalization
+    #term for all components as required for the variational lower bound.
+    def wishart_norm(self, W_cholesky, eta):
+        logdet_term = -eta * np.sum(np.log(np.diag(W_cholesky)))
+        inverse_term = np.asarray([loggamma( 0.5 * (eta + 1 - i)) for i in range(W_cholesky.shape[0] - 1)])
+        inverse_term = np.prod(inverse_term) * (2 ** (0.5 * eta * W_cholesky.shape[0]))
+        inverse_term *= np.pi ** (W_cholesky.shape[0] * (W_cholesky.shape[0] - 1) / 4)
+        return logdet_term / inverse_term
+
 
     '''End in progress section.'''
 ################################################################

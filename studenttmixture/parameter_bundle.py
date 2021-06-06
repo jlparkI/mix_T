@@ -10,7 +10,7 @@ import numpy as np
 class ParameterBundle():
 
     def __init__(self, X, n_components, start_df, random_state):
-        self.loc_, self.scale_, self.scale_cholesky_, self.scale_inv_cholesky_,\
+        self.loc_, self.scale_, self.scale_chole_, self.scale_inv_chole_,\
                 self.mix_weights_, self.df_ = self.initialize_params(X, n_components, 
                                                 start_df, random_state)
         #The parameters can all be initialized using the data. The expectation
@@ -23,6 +23,12 @@ class ParameterBundle():
 
         #E_log_gamma is the expectation for the log of the hidden variable in the formulation
         #of a student's t distribution as a Gaussian scale mixture.
+        self.E_log_gamma = None
+
+        #a_nm and b_nm are the parameters of the Gamma distribution that supplies the hidden
+        #variable from above. Required for calculation of the variational lower bound.
+        self.a_nm = None
+        self.b_nm = None
         
         #Resp is the responsibility of each component for each datapoint (the expectation
         #for s_nm using Bishop's notation).
