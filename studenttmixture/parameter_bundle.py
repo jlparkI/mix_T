@@ -1,7 +1,10 @@
 import numpy as np
 
-#A simple helper class to store all the model parameters that are updated during training.
-#This includes expectations that are required to calculate the lower bound. At the end
+#A helper class to store all the model parameters that are updated during training.
+#This includes expectations that are required to calculate the lower bound. Because
+#there are a lot of steps involved in calculating the variational lower bound, it
+#is easier to store everything required in this class so that all the required information
+#can be passed as a "bundle". At the end
 #of training, the parameters needed to make predictions are transferred to the 
 #main model object and the object of this class is no longer required.
 class ParameterBundle():
@@ -11,8 +14,37 @@ class ParameterBundle():
                 self.mix_weights_, self.df_ = self.initialize_params(X, n_components, 
                                                 start_df, random_state)
         #The parameters can all be initialized using the data. The expectation
-        #values will be initialized on the first fitting pass.
-        self.E_u
+        #values will be initialized on the first fitting pass. E refers to
+        #expectation, i.e. E_log_mixweights = <log mix_weights>.
+        
+        #E_gamma is the the expectation for the hidden variable in the formulation
+        #of a student's t distribution as a Gaussian scale mixture.
+        self.E_gamma = None
+
+        #E_log_gamma is the expectation for the log of the hidden variable in the formulation
+        #of a student's t distribution as a Gaussian scale mixture.
+        
+        #Resp is the responsibility of each component for each datapoint (the expectation
+        #for s_nm using Bishop's notation).
+        self.E_resp = None
+        
+        #The expectation of the log of the mixture weights.
+        self.E_log_mixweights = None
+        
+        #The sum of the responsibilities for each component across all datapoints. Shape is dim K.
+        self.Nk = None
+
+        #The expectation of the outer product of the location of each component.
+        self.E_loc_outer_prod = None
+
+        #Matrix used for construction of the expected scale and location values.
+        self.R_adj_scale = None
+
+        #The expectation for the squared mahalanobis distance (w/r/t scale & location).
+        self.E_sq_maha_dist = None
+
+        
+        
      
     #We initialize parameters using a modified kmeans++ algorithm, whereby
     #cluster centers are chosen and each datapoint is given a hard

@@ -7,7 +7,7 @@ class VariationalMixHyperparams():
     def __init__(self, loc_prior, scale_inv_prior, degrees_of_freedom_prior,
                     weight_concentration_prior, wishart_v0, mean_covariance_prior,
                     dirichlet_alpha_m_prior):
-        self.loc = loc_prior
+        self.loc_prior = loc_prior
         self.wishart_scale_inv = scale_inv_prior
         self.dof = degrees_of_freedom_prior
         self.mean_cov_prior = mean_covariance_prior
@@ -17,7 +17,7 @@ class VariationalMixHyperparams():
 
     #Check the user hyperparameters to make sure they are sensible. If any of them
     #are None, calculate useful defaults using the input data.
-    def check_hyperparameters(self, X):
+    def check_hyperparameters(self, X, n_components):
         if self.mean_prior is None:
             self.mean_prior = np.mean(X, axis=0)
         else:
@@ -49,7 +49,7 @@ class VariationalMixHyperparams():
             if self.dof_prior < 1:
                 raise ValueError("Degrees of freedom prior must be >= 1!")
         if self.weight_conc_prior is None:
-            self.weight_conc_prior = 1 / self.max_components
+            self.weight_conc_prior = 1 / n_components
         else:
             try:
                 self.weight_conc_prior = float(self.weight_conc_prior)
