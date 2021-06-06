@@ -9,6 +9,7 @@ from scipy.special import gammaln, logsumexp, digamma, polygamma
 from scipy.optimize import newton
 from .variational_hyperparams import VariationalMixHyperparams as Hyperparams
 from .parameter_bundle import ParameterBundle as ParamBundle
+from copy import copy
 
 
 
@@ -38,14 +39,19 @@ from .parameter_bundle import ParameterBundle as ParamBundle
 #verbose        --  Print updates to keep user updated on fitting.
 #init_type      --  The type of initialization algorithm -- either "k++" for kmeans++ or 
 #                   "kmeans" for kmeans.
-#scale_prior    --  The prior for the scale matrices. Defaults to None. If None,
-#                   this class will use a reasonable data-driven default for the 
+#scale_inv_prior    --  The prior for the inverse of the scale matrices. Defaults to None.
+#                   If None, this class will use a reasonable data-driven default for the 
 #                   scale prior. If it is not None, it must be of shape D x D x K, 
-#                   for D dimensions and K components.
-#dof_prior      --  The prior for the degrees of freedom. Again, if None will be set to
-#                   a reasonable default.
-#loc_prior      --  The prior for the location of each component. Again, if None it will
+#                   for D dimensions and K components. This component should never be
+#                   set to zero because it provides some regularization and ensures the
+#                   scale matrices are positive definite, similar to reg_covar in EM.
+#loc_prior      --  The prior for the location of each component. If None it will
 #                   be set to the mean of the data.
+#mean_cov_prior --  The diagonal value for the covariance matrix of the prior for the
+#                   location of the components of the mixture. This essentially determines
+#                   how much weight the model puts on the prior -- a very large value
+#                   will force the model to push all components onto the prior mean!
+#                   Generally use a small nonzero value.
 #weight_conc_prior  --  The weight concentration prior. This is crucial to determining
 #                   the behavior of the algorithm and is one of the most important
 #                   user-determined values. A high value indicates many clusters are
@@ -71,11 +77,10 @@ from .parameter_bundle import ParameterBundle as ParamBundle
 
 class VariationalStudentMixture():
 
-    def __init__(self, n_components = 2, tol=1e-5,
-            reg_covar=1e-06, max_iter=1000, n_init=1,
-            df = 4.0, fixed_df = True, random_state=123, verbose=False,
-            init_type = "k++", scale_prior=None, dof_prior=None, loc_prior=None,
-            weight_conc_prior=1.0):
+    def __init__(self, n_components = 2, tol=1e-5, max_iter=1000, n_init=1,
+            df = 4.0, fixed_df = True, random_state=123, verbose=True,
+            init_type = "k++", scale_inv_prior=None, loc_prior=None,
+            mean_cov_prior = 1e-3, weight_conc_prior=1.0):
         self.check_user_params(n_components, tol, reg_covar, max_iter, n_init, df, random_state,
                 init_type)
         #General model parameters specified by user.
@@ -83,15 +88,15 @@ class VariationalStudentMixture():
         self.fixed_df = fixed_df
         self.n_components = n_components
         self.tol = tol
-        self.reg_covar = reg_covar
         self.max_iter = max_iter
         self.init_type = init_type
         #Hyperparameters. These are unique to the variational mixture.
-        #Any that are None will be automatically calculated 
-        #when fit is called. The Hyperparams object will check the priors passed to
-        #it for validity.
-        self.hyperparams = Hyperparams(loc_prior, scale_prior, degrees_of_freedom_prior,
-                        weight_conc_prior)
+        #Any that are None will be calculated using a call to Hyperparams.initialize()
+        #when fit is called.
+        self.scale_inv_prior = scale_inv_prior
+        self.loc_prior = loc_prior
+        self.mean_cov_prior = mean_cov_prior
+        self.weight_conc_prior = weight_conc_prior
         #the number of restarts -- this is different from max_iter, which is the maximum 
         #number of iterations per restart.
         self.n_init = n_init
@@ -209,28 +214,38 @@ class VariationalStudentMixture():
     #X              --  The raw data for fitting. This must be either a 1d array, in which case
     #                   self.check_fitting_data will reshape it to a 2d 1-column array, or
     #                   a 2d array where each column is a feature and each row a datapoint.
-    def fit(self, X):
+    #purge_unused_clusters  --  A boolean value indicating whether at the end of fitting the
+    #               algorithm should remove any clusters for which the mixture weight is
+    #               < unused_cluster_threshold. Set to True by default. Generally if a cluster
+    #               is "empty" at the end of fitting, it should be removed after fitting to
+    #               save memory.
+    #unusued_cluster_threshold  --  The threshold below which a mixture weight is considered
+    #               to indicate the cluster is empty. Only used if purge_unused_clusters is True.
+    def fit(self, X, purge_unusued_clusters = True, unused_cluster_threshold = 1e-8):
         x = self.check_fitting_data(X)
         best_lower_bound = -np.inf
+        #Check the user specified hyperparams and for any that are None (indicating user
+        #wanted us to initialize them), initialize them. The Hyperparams object stores
+        #them in a convenient bundle that can be passed to all the update functions.
+        hyperparams = Hyperparams(x, self.loc_prior, self.scale_inv_prior, self.weight_conc_prior,
+                                       wishart_v0 = 1, mean_covariance_prior = self.mean_cov_prior,
+                                       n_components = self.n_components)
         #We use self.n_init restarts and save the best result. More restarts = better 
         #chance to find the best possible solution, but also higher cost.
         for i in range(self.n_init):
             #Increment random state so that each random initialization is different from the
             #rest but so that the overall chain is reproducible.
-            lower_bound, convergence, param_bundle = self.fitting_restart(x, self.random_state + i)
+            lower_bound, convergence, param_bundle = self.fitting_restart(x, self.random_state + i,
+                                        hyperparams, purge_unused_clusters, unusued_cluster_threshold)
             if self.verbose:
                 print("Restart %s now complete"%i)
             if convergence == False:
                 print("Restart %s did not converge!"%(i+1))
             #If this is the best lower bound we've seen so far, update our saved
-            #parameters.
+            #parameters using the parameter bundle and then discard it.
             elif lower_bound > best_lower_bound:
-                best_lower_bound = lower_bound
-                self.df_, self.location_, self.scale_ = param_bundle.df_, param_bundle.loc_, \
-                                                        param_bundle.scale_
-                self.scale_inv_cholesky_ = param_bundle.scale_inv_cholesky_
-                self.scale_cholesky_ = param_bundle.scale_cholesky_
-                self.mix_weights_ = param_bundle.mix_weights_
+                self.transfer_fit_params(param_bundle)
+                del param_bundle
                 self.converged_ = True
         if self.converged_ == False:
             print("The model did not converge on any of the restarts! Try increasing max_iter or "
@@ -243,6 +258,14 @@ class VariationalStudentMixture():
     #X              --  The raw data. Must be a 2d array where each column is a feature and
     #                   each row is a datapoint. The caller (self.fit) ensures this is true.
     #random_state   --  The seed for the random number generator.
+    #hyperparams    --  A copy of the hyperparameters object stored by the class.
+    #purge_unused_clusters  --  A boolean value indicating whether at the end of fitting the
+    #               algorithm should remove any clusters for which the mixture weight is
+    #               < unused_cluster_threshold. Set to True by default. Generally if a cluster
+    #               is "empty" at the end of fitting, it should be removed after fitting to
+    #               save memory.
+    #unusued_cluster_threshold  --  The threshold below which a mixture weight is considered
+    #               to indicate the cluster is empty. Only used if purge_unused_clusters is True.
     #
     #RETURNED PARAMETERS        
     #current_bound  --  The lower bound for the current fitting iteration. The caller (self.fit)
@@ -250,21 +273,26 @@ class VariationalStudentMixture():
     #convergence    --  A boolean indicating convergence or lack thereof.
     #param_bundle   --  Object containing all fit parameters and all values needed to calculate
     #                   the lower bound.
-    def fitting_restart(self, X, random_state):
-        self.hyperparams.check_hyperparameters(x, self.n_components)
+    def fitting_restart(self, X, random_state, hyperparams,
+                        purge_unused_clusters, unused_cluster_threshold):
         param_bundle = ParameterBundle(X, self.n_components, self.start_df, random_state)
+        
+        #The param_bundle has several expectations that need to be initialized before
+        #the first fitting iteration -- this is done by the following function call.
+        param_bundle = self.initialize_expectations(param_bundle)
         lower_bound, convergence = -np.inf, False
         #For each iteration, we run the E step calculations then the M step
         #calculations, update the lower bound then check for convergence.
         for i in range(self.max_iter):
-            '''IN PROGRESS'''
-            param_bundle = self.update_resp(X, param_bundle, self.hyperparams)
-            param_bundle = self.update_log_mixweights(X, param_bundle, self.hyperparams)
-            param_bundle = self.update_u(X, param_bundle, self.hyperparams)
-            param_bundle = self.update_scale(X, param_bundle, self.hyperparams)
-            param_bundle = self.update_loc(X, param_bundle, self.hyperparams)
-            param_bundle = self.update_maha_dist(X, param_bundle, self.hyperparams)
-            '''IN PROGRESS'''
+            #It is important to call the update equations in the order shown since on the first
+            #pass not all of the required expectations have been calculated yet, so for the first
+            #iteration we need to call the update functions in this order.
+            param_bundle = self.update_resp(X, param_bundle, hyperparams)
+            param_bundle = self.update_log_mixweights(X, param_bundle, hyperparams)
+            param_bundle = self.update_Egamma(X, param_bundle, hyperparams)
+            param_bundle = self.update_loc(X, param_bundle, hyperparams)
+            param_bundle = self.update_scale(X, param_bundle, hyperparams)
+            lower_bound = self.update_lower_bound(X, param_bundle, hyperparams)
 
             change = current_bound - lower_bound
             #IN GENERAL, for variational mean field, the lower bound will always increase, and this is in
@@ -280,6 +308,50 @@ class VariationalStudentMixture():
                 print("Change in lower bound: %s"%change)
                 print("Actual lower bound: %s" % current_bound)
         return current_bound, convergence, param_bundle
+
+
+
+    #This function initializes the expectation values needed before the first fitting
+    #iteration using simple maximum likelihood procedures (in the mean-field formulation
+    #of this problem, they are all interdependent, so maximum likelihood while holding
+    #location_ and scale_inv_ fixed offers a convenient way to get starting estimates).
+    #INPUTS:
+    #X              --  The raw data. Must be a 2d array where each column is a feature and
+    #                   each row is a datapoint.
+    #params         --  Object of class ParameterBundle holding slots for all
+    #                   of the parameters and expectations that will be needed.
+    #
+    #OUTPUTS:
+    #params         --  The updated ParameterBundle.
+    def initialize_expectations(self, X, params):
+        params.E_sq_maha_dist = self.vectorized_sq_maha_dist(X, params.loc_,
+                                                             params.scale_inv_chole_)
+        params.E_gamma = (params.df_[:,np.newaxis] + X.shape[1]) / (df_[np.newaxis,:] \
+                                                        + params.E_sq_maha_dist)
+        params.E_log_gamma = np.log(params.E_gamma)
+        params.E_log_mixweights = np.log(np.full(shape = self.n_components, fill_value =
+                                          1 / self.n_components))
+        params.E_logdet_scale_inv = [2 * np.sum(np.log(np.diag(params.scale_inv_chole_[:,:,i])))
+                                     for i in range(self.n_components)]
+        #params.E_resp, params.a_nm, params.b_nm, params.Nk, params.R_adj_scale
+        #will all be calculated on the
+        #first fitting pass, so we don't need to calculate them here.
+        return params
+
+    #At the end of fitting, the parameters need to be transferred from the ParameterBundle
+    #class to the VariationalStudentMixture class so the user can access them easily and
+    #so they can be used to make predictions. This function performs the transfer.
+    #INPUTS:
+    #params         --  Object of class ParameterBundle holding all of the fit parameters.
+    def transfer_fit_params(self, params):
+        self.scale_inv_cholesky_ = params.scale_inv_chole_
+        self.scale_cholesky_ = self.get_inv_chole(self.scale_inv_cholesky_)
+        self.scale_ = [np.matmul(self.scale_cholesky_[:,:,i], self.scale_cholesky_[:,:,i].T)
+                       for i in range(self.n_components)]
+        self.df_ = params.df_
+        self.location_ = params.loc_
+        self.mix_weights = np.exp(params.E_log_mixweights)
+
 
 #################################################################
     '''These are the core routines for fitting the variational student mixture --
@@ -326,7 +398,7 @@ class VariationalStudentMixture():
     #Params that are updated: E_gamma, E_log_gamma, a_nm, b_nm
     #a_nm and b_nm here refer to the parameters of a Gamma distribution,
     #i.e. G(u_nm | a_nm, b_nm)
-    def update_u(self, X, params, hyperparams):
+    def update_Egamma(self, X, params, hyperparams):
         params.a_nm = 0.5 * (params.df_[:,np.newaxis] + params.E_resp * X.shape[1])
         params.b_nm = 0.5 * (params.df_[:,np.newaxis] +
                              params.E_resp * params.E_sq_maha_dist)
@@ -334,9 +406,24 @@ class VariationalStudentMixture():
         params.E_log_gamma = digamma(params.a_nm) - np.log(params.b_nm) 
         return params
 
+    #Updates the loc_ (the location of each component) and associated expectations.
+    #Params that are used: scale_inv_, scale_inv_chole_, E_gamma, E_resp
+    #Params that are updated: R_adj_scale, loc_
+    def update_loc(self, X, params, hyperparams):
+        weighted_resp = params.E_resp * params.E_gamma
+        weighted_resp_sum = np.sum(weighted_resp, axis=0)
+        for i in range(self.n_components):
+            params.R_adj_scale[:,:,i] = params.scale_inv_[:,:,i] * weighted_resp_sum[i]
+            params.R_adj_scale[:,:,i].flat[::X.shape[1] + 1] += hyperparams.mean_cov_prior            
+            weighted_mean = weighted_resp[:,i:i+1] * X + hyperparams.mean_cov_prior * \
+                            hyperparams.loc_prior[:,np.newaxis]
+            weighted_mean = np.matmul(params.scale_inv_[:,:,i], np.sum(weighted_mean, axis=0))
+            params.loc_[i,:] = solve(params.R_adj_scale[:,:,i], weighted_mean)
+        return params
+
     #Updates the scale_inv (inverse of the scale matrix) and associated expectations.
     #Params that are used:
-    #loc_, E_resp, E_gamma, Nk
+    #loc_, E_resp, E_gamma, Nk, R_adj_scale
     #Params that are updated:
     #scale_inv_, scale_inv_chole, E_logdet_scale_inv
     def update_scale(self, X, params, hyperparams):
@@ -362,21 +449,6 @@ class VariationalStudentMixture():
             logdet_scale_inv += np.sum([digamma(0.5 * (wishart_dof_updated[i] + 1 - k)) for
                                         k in range(X.shape[1])])
             params.E_logdet_scale_inv[i] = logdet_scale_inv
-        return params
-
-    #Updates the loc_ (the location of each component) and associated expectations.
-    #Params that are used: scale_inv_, scale_inv_chole_, E_gamma, E_resp
-    #Params that are updated: R_adj_scale, loc_
-    def update_loc(self, X, params, hyperparams):
-        weighted_resp = params.E_resp * params.E_gamma
-        weighted_resp_sum = np.sum(weighted_resp, axis=0)
-        for i in range(self.n_components):
-            params.R_adj_scale[:,:,i] = params.scale_inv_[:,:,i] * weighted_resp_sum[i]
-            params.R_adj_scale[:,:,i].flat[::X.shape[1] + 1] += hyperparams.mean_cov_prior            
-            weighted_mean = weighted_resp[:,i:i+1] * X + hyperparams.mean_cov_prior * \
-                            hyperparams.loc_prior[:,np.newaxis]
-            weighted_mean = np.matmul(params.scale_inv_[:,:,i], np.sum(weighted_mean, axis=0))
-            params.loc_[i,:] = solve(params.R_adj_scale[:,:,i], weighted_mean)
         return params
 
     
@@ -539,18 +611,20 @@ class VariationalStudentMixture():
     #array of dim N x K for N datapoints, K mixture components containing the squared
     #mahalanobis distance from each datapoint to each component.
     def vectorized_sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
-        sq_maha_dist = np.empty((X.shape[0], self.n_components))
         y1 = np.matmul(X, np.transpose(scale_inv_cholesky_, (2,0,1)))
         y2 = np.sum(loc_.T[:,np.newaxis,:] * scale_inv_cholesky_, axis=0)
         y = np.transpose(y1, (1,0,2)) - y2.T
         return np.sum(y**2, axis=2)
 
-    #Gets the inverse of the cholesky decomposition of the scale matrix.
-    def get_scale_inv_cholesky(self, scale_cholesky_, scale_inv_cholesky_):
-        for i in range(scale_cholesky_.shape[2]):
-            scale_inv_cholesky_[:,:,i] = solve_triangular(scale_cholesky_[:,:,i],
-                    np.eye(scale_cholesky_.shape[0]), lower=True).T
-        return scale_inv_cholesky_
+    #Invert a stack of cholesky decompositions of a scale or precision matrix.
+    #The inputs chole_array and inv_chole_array must both be of size D x D x K,
+    #where D is dimensionality of data and K is number of components. inv_chole_array
+    #will be populated with the output and returned.
+    def get_inv_cholesky(self, chole_array, inv_chole_array):
+        for i in range(chole_array.shape[2]):
+            inv_chole_array[:,:,i] = solve_triangular(chole_array[:,:,i],
+                    np.eye(chole_array.shape[0]), lower=True).T
+        return inv_chole_array
 
 
     #Calculates log p(X | theta) where theta is the current set of parameters but does
@@ -573,100 +647,6 @@ class VariationalStudentMixture():
                         for i in range(self.n_components)]
         scale_logdet = np.asarray(scale_logdet)
         return -scale_logdet[np.newaxis,:] + const_term[np.newaxis,:] + sq_maha_dist
-    
-
-    #Initializes the model parameters. Two approaches are available for initializing
-    #the location (analogous to mean of a Gaussian): k++ and kmeans. THe scale is
-    #always initialized using a broad value (the covariance of the full dataset + reg_covar)
-    #for all components, while mixture_weights are always initialized to be equal for all
-    #components, and df is set to the starting value. All initialized parameters are 
-    #returned to caller.
-    def initialize_params(self, X, random_seed, init_type):
-        #We set loc_ to starting values using the k++ algorithm. If the user
-        #selected kmeans as their preferred initialization, we then update and refine
-        #the loc_values generated by k++ using kmeans.
-        loc_ = self.kplusplus_initialization(X, random_seed)
-        if init_type == "kmeans":
-            loc_ = self.kmeans_initialization(X, loc_)
-        
-        mix_weights_ = np.empty(self.n_components)
-        mix_weights_.fill(1/self.n_components)
-
-        #Set all scale matrices to a broad default -- the covariance of the data.
-        default_scale_matrix = np.cov(X, rowvar=False)
-        default_scale_matrix.flat[::X.shape[1] + 1] += self.reg_covar
-
-        #For 1-d data, ensure default scale matrix has correct shape.
-        if len(default_scale_matrix.shape) < 2:
-            default_scale_matrix = default_scale_matrix.reshape(-1,1)
-        scale_ = np.stack([default_scale_matrix for i in range(self.n_components)],
-                        axis=-1)
-        scale_cholesky_ = [np.linalg.cholesky(scale_[:,:,i]) for i in range(self.n_components)]
-        scale_cholesky_ = np.stack(scale_cholesky_, axis=-1)
-        scale_inv_cholesky_ = np.empty_like(scale_cholesky_)
-        scale_inv_cholesky_ = self.get_scale_inv_cholesky(scale_cholesky_,
-                            scale_inv_cholesky_)
-
-        return loc_, scale_, mix_weights_, scale_cholesky_, scale_inv_cholesky_
-
-
-
-    #The first option for initializing loc_ is k++, a modified version of the
-    #kmeans++ algorithm. (This is also used to get starting points for kmeans if
-    #the user selects kmeans to initialize loc_.)
-    #On each iteration (until we have reached n_components,
-    #a new cluster center is chosen randomly with a probability for each datapoint
-    #inversely proportional to its smallest distance to any existing cluster center.
-    #This tends to ensure that starting cluster centers are widely spread out. This
-    #algorithm originated with Arthur and Vassilvitskii (2007).
-    def kplusplus_initialization(self, X, random_seed):
-        np.random.seed(random_seed)
-        loc_ = [X[np.random.randint(0, X.shape[0]-1), :]]
-        dist_arr_list = []
-        for i in range(1, self.n_components):
-            dist_arr = np.sum((X - loc_[i-1])**2, axis=1)
-            dist_arr_list.append(dist_arr)
-            distmat = np.stack(dist_arr_list, axis=-1)
-            min_dist = np.min(distmat, axis=1)
-            min_dist = min_dist / np.sum(min_dist)
-            next_center_id = np.random.choice(distmat.shape[0], size=1, p=min_dist)
-            loc_.append(X[next_center_id[0],:])
-        return np.stack(loc_)
-
-
-
-    #The second alternative for initializing loc_is kmeans clustering. It takes as
-    #input the data X (NxD for N datapoints, D dimensions) and as a starting point
-    #loc_ returned by self.kplusplus_initialization (KxD for K components, D dimensions).
-    #This is a simple initialization of Lloyd's algorithm for kmeans; by rolling our
-    #own, we avoid the need to include scikitlearn as a dependency. (I anticipate that
-    #k++ will be a more popular choice for initialization anyway, since clustering via
-    #kmeans then via re-clustering via a mixture model is redundant even if admittedly
-    #it is sometimes useful).
-    def kmeans_initialization(self, X, loc_):
-        clust_ids = np.empty_like(X)
-        X = X[:,:,np.newaxis]
-        loc_ = loc_.T[np.newaxis,:,:]
-        #Notice that we use the same parameter (self.max_iter) to govern the maximum
-        #number of iterations for overall model fitting and also for kmeans initialization
-        #AND df_ optimization. This seems better than having the user specify a separate
-        #maximum for each, although there might be some fairly rare use cases where that
-        #would be preferable.
-        prior_loc_ = np.copy(loc_)
-        for i in range(self.max_iter):
-            dist_array = np.sum((X - loc_)**2, axis=1)
-            clust_ids = np.argmax(dist_array, axis=1)
-            loc_ = [np.mean(np.take(X, clust_ids == i, axis=0), axis=0).flatten() for
-                    i in range(self.n_components)]
-            loc_ = np.stack(loc_, axis=1)[np.newaxis,:,:]
-            #We use a hard-coded tol of 1e-4 for this procedure, which is fairly generous
-            #and should allow fast convergence. We just need an approximate starting point
-            #since the mixture fit should refine this substantially.
-            loc_shift = np.linalg.norm(loc_ - prior_loc_, axis=1)
-            if np.max(loc_shift) < 1e-3:
-                break
-            prior_loc_ = np.copy(loc_)
-        return np.squeeze(loc_, axis=0).T
 
 
 
