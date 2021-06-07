@@ -4,11 +4,11 @@
 #License: MIT
 
 import numpy as np, math
-from scipy.linalg import solve_triangular
-from scipy.special import gammaln, logsumexp, digamma, polygamma
+from scipy.linalg import solve_triangular, solve
+from scipy.special import gammaln, logsumexp, digamma, polygamma, loggamma
 from scipy.optimize import newton
-from .variational_hyperparams import VariationalMixHyperparams as Hyperparams
-from .parameter_bundle import ParameterBundle as ParamBundle
+from variational_hyperparams import VariationalMixHyperparams as Hyperparams
+from parameter_bundle import ParameterBundle
 from copy import copy
 
 
@@ -81,10 +81,10 @@ class VariationalStudentMixture():
             df = 4.0, fixed_df = True, random_state=123, verbose=True,
             init_type = "k++", scale_inv_prior=None, loc_prior=None,
             mean_cov_prior = 1e-3, weight_conc_prior=1.0):
-        self.check_user_params(n_components, tol, reg_covar, max_iter, n_init, df, random_state,
+        self.check_user_params(n_components, tol, 1e-3, max_iter, n_init, df, random_state,
                 init_type)
         #General model parameters specified by user.
-        self.start_df_ = float(df)
+        self.start_df = float(df)
         self.fixed_df = fixed_df
         self.n_components = n_components
         self.tol = tol
@@ -221,7 +221,7 @@ class VariationalStudentMixture():
     #               save memory.
     #unusued_cluster_threshold  --  The threshold below which a mixture weight is considered
     #               to indicate the cluster is empty. Only used if purge_unused_clusters is True.
-    def fit(self, X, purge_unusued_clusters = True, unused_cluster_threshold = 1e-8):
+    def fit(self, X, purge_unused_clusters = True, unused_cluster_threshold = 1e-8):
         x = self.check_fitting_data(X)
         best_lower_bound = -np.inf
         #Check the user specified hyperparams and for any that are None (indicating user
@@ -236,7 +236,7 @@ class VariationalStudentMixture():
             #Increment random state so that each random initialization is different from the
             #rest but so that the overall chain is reproducible.
             lower_bound, convergence, param_bundle = self.fitting_restart(x, self.random_state + i,
-                                        hyperparams, purge_unused_clusters, unusued_cluster_threshold)
+                                        hyperparams, purge_unused_clusters, unused_cluster_threshold)
             if self.verbose:
                 print("Restart %s now complete"%i)
             if convergence == False:
@@ -244,7 +244,7 @@ class VariationalStudentMixture():
             #If this is the best lower bound we've seen so far, update our saved
             #parameters using the parameter bundle and then discard it.
             elif lower_bound > best_lower_bound:
-                self.transfer_fit_params(param_bundle)
+                self.transfer_fit_params(param_bundle, hyperparams)
                 del param_bundle
                 self.converged_ = True
         if self.converged_ == False:
@@ -279,23 +279,26 @@ class VariationalStudentMixture():
         
         #The param_bundle has several expectations that need to be initialized before
         #the first fitting iteration -- this is done by the following function call.
-        param_bundle = self.initialize_expectations(param_bundle)
-        lower_bound, convergence = -np.inf, False
+        param_bundle = self.initialize_expectations(X, param_bundle)
+        old_lower_bound, convergence = -np.inf, False
         #For each iteration, we run the E step calculations then the M step
         #calculations, update the lower bound then check for convergence.
         for i in range(self.max_iter):
             #It is important to call the update equations in the order shown since on the first
             #pass not all of the required expectations have been calculated yet, so for the first
             #iteration we need to call the update functions in this order.
+        
             param_bundle = self.update_resp(X, param_bundle, hyperparams)
             param_bundle = self.update_log_mixweights(X, param_bundle, hyperparams)
             param_bundle = self.update_Egamma(X, param_bundle, hyperparams)
             param_bundle = self.update_loc(X, param_bundle, hyperparams)
             param_bundle = self.update_scale(X, param_bundle, hyperparams)
-            lower_bound = self.update_lower_bound(X, param_bundle, hyperparams)
+            new_lower_bound = self.update_lower_bound(X, param_bundle, hyperparams)
 
-            change = current_bound - lower_bound
-            #IN GENERAL, for variational mean field, the lower bound will always increase, and this is in
+            change = new_lower_bound - old_lower_bound
+            #convergence = True
+            #break
+            #For variational mean field as for EM, the lower bound will always increase, and this is in
             #fact a useful debugging tool; However, in the event that for some reason specific to some
             #unusual dataset it does not, we do not want to generate what might from the user's
             #perspective be a rather mystifying error, so we use abs(change) rather than 
@@ -303,11 +306,13 @@ class VariationalStudentMixture():
             if abs(change) < self.tol:
                 convergence = True
                 break
-            lower_bound = current_bound
-            if self.verbose:
-                print("Change in lower bound: %s"%change)
-                print("Actual lower bound: %s" % current_bound)
-        return current_bound, convergence, param_bundle
+            old_lower_bound = new_lower_bound
+            print(change)
+            #if self.verbose and change < 0:
+            #    print(change)
+                #print("Change in lower bound: %s"%change)
+                #print("Actual lower bound: %s" % new_lower_bound)
+        return new_lower_bound, convergence, param_bundle
 
 
 
@@ -324,18 +329,21 @@ class VariationalStudentMixture():
     #OUTPUTS:
     #params         --  The updated ParameterBundle.
     def initialize_expectations(self, X, params):
-        params.E_sq_maha_dist = self.vectorized_sq_maha_dist(X, params.loc_,
+        params.E_sq_maha_dist = self.vectorized_sq_maha_distance(X, params.loc_,
                                                              params.scale_inv_chole_)
-        params.E_gamma = (params.df_[:,np.newaxis] + X.shape[1]) / (df_[np.newaxis,:] \
+        params.E_gamma = (params.df_[np.newaxis,:] + X.shape[1]) / (params.df_[np.newaxis,:] \
                                                         + params.E_sq_maha_dist)
         params.E_log_gamma = np.log(params.E_gamma)
         params.E_log_mixweights = np.log(np.full(shape = self.n_components, fill_value =
                                           1 / self.n_components))
         params.E_logdet_scale_inv = [2 * np.sum(np.log(np.diag(params.scale_inv_chole_[:,:,i])))
                                      for i in range(self.n_components)]
+        params.E_logdet_scale_inv = np.asarray(params.E_logdet_scale_inv)
         #params.E_resp, params.a_nm, params.b_nm, params.Nk, params.R_adj_scale
         #will all be calculated on the
         #first fitting pass, so we don't need to calculate them here.
+        params.E_resp = np.empty((X.shape[0], self.n_components))
+        params.R_adj_scale = np.empty((X.shape[1], X.shape[1], self.n_components))
         return params
 
     #At the end of fitting, the parameters need to be transferred from the ParameterBundle
@@ -343,14 +351,16 @@ class VariationalStudentMixture():
     #so they can be used to make predictions. This function performs the transfer.
     #INPUTS:
     #params         --  Object of class ParameterBundle holding all of the fit parameters.
-    def transfer_fit_params(self, params):
+    def transfer_fit_params(self, params, hyperparams):
         self.scale_inv_cholesky_ = params.scale_inv_chole_
-        self.scale_cholesky_ = self.get_inv_chole(self.scale_inv_cholesky_)
+        self.scale_cholesky_ = np.empty_like(self.scale_inv_cholesky_)
+        self.scale_cholesky_ = self.get_inv_cholesky(self.scale_inv_cholesky_, self.scale_cholesky_)
         self.scale_ = [np.matmul(self.scale_cholesky_[:,:,i], self.scale_cholesky_[:,:,i].T)
                        for i in range(self.n_components)]
         self.df_ = params.df_
         self.location_ = params.loc_
-        self.mix_weights = np.exp(params.E_log_mixweights)
+        updated_alpha = hyperparams.alpha_m + params.Nk
+        self.mix_weights = (updated_alpha - 1) / (np.sum(updated_alpha) - self.n_components)
 
 
 #################################################################
@@ -359,14 +369,14 @@ class VariationalStudentMixture():
     0.0.2.'''
 
     #Params that are needed: E_logdet_scale_inv, E_log_mixweights, E_log_gamma
-    #Params that are updated: E_sq_maha_dist, E_resp, Nk
+    #Params that are updated: E_resp, Nk
     def update_resp(self, X, params, hyperparams):
-        params = self.update_sq_maha_dist(X, params)
         for i in range(self.n_components):
             params.E_resp[:,i] = -0.5 * params.E_gamma[:,i] * params.E_sq_maha_dist[:,i]
             params.E_resp[:,i] += 0.5 * X.shape[1] * (params.E_log_gamma[:,i] - np.log(2 * np.pi))
             params.E_resp[:,i] += 0.5 * params.E_logdet_scale_inv[i] + params.E_log_mixweights[i]
-        params.E_resp = params.E_resp - logsumexp(params.E_resp, axis=1)
+        params.E_resp = params.E_resp - logsumexp(params.E_resp, axis=1)[:,np.newaxis]
+        params.E_resp = np.exp(params.E_resp)
         params.Nk = np.sum(params.E_resp, axis=0)
         return params
 
@@ -374,12 +384,12 @@ class VariationalStudentMixture():
     #Params that are used: scale_inv_, loc_
     #Params that are updated: E_sq_maha_dist
     def update_sq_maha_dist(self, X, params):
-        for i in range(self.mix_weights_.shape[0]):
-            params.E_sq_maha_dist[:,i] = np.matmul(X, params.scale_inv_[:,:,i])
-            params.E_sq_maha_dist[:,i] = np.matmul(params.E_sq_maha_dist[:,i], X.T) + \
-                    2 * np.matmul(params.E_sq_maha_dist[:,i], params.loc_[i,:])
+        for i in range(self.n_components):
+            y1 = np.matmul(X, params.scale_inv_[:,:,i])
+            params.E_sq_maha_dist[:,i] = np.sum(y1 * X, axis=1)
+            params.E_sq_maha_dist[:,i] -= 2 * np.sum(y1 * params.loc_[i:i+1,:], axis=1)
             E_mean_outer_prod = params.R_adj_scale[:,:,i] + np.outer(params.loc_[i,:], params.loc_[i,:])
-            params.E_sq_maha_dist[:,i] += np.trace(np.matmul(E_mean_outer_prod, self.scale_inv_[:,:,i]))
+            params.E_sq_maha_dist[:,i] += np.trace(np.matmul(E_mean_outer_prod, params.scale_inv_[:,:,i]))
         return params
 
     #Updates the log of the mixture weights.
@@ -399,8 +409,8 @@ class VariationalStudentMixture():
     #a_nm and b_nm here refer to the parameters of a Gamma distribution,
     #i.e. G(u_nm | a_nm, b_nm)
     def update_Egamma(self, X, params, hyperparams):
-        params.a_nm = 0.5 * (params.df_[:,np.newaxis] + params.E_resp * X.shape[1])
-        params.b_nm = 0.5 * (params.df_[:,np.newaxis] +
+        params.a_nm = 0.5 * (params.df_[np.newaxis,:] + params.E_resp * X.shape[1])
+        params.b_nm = 0.5 * (params.df_[np.newaxis,:] +
                              params.E_resp * params.E_sq_maha_dist)
         params.E_gamma = params.a_nm / params.b_nm
         params.E_log_gamma = digamma(params.a_nm) - np.log(params.b_nm) 
@@ -414,9 +424,9 @@ class VariationalStudentMixture():
         weighted_resp_sum = np.sum(weighted_resp, axis=0)
         for i in range(self.n_components):
             params.R_adj_scale[:,:,i] = params.scale_inv_[:,:,i] * weighted_resp_sum[i]
-            params.R_adj_scale[:,:,i].flat[::X.shape[1] + 1] += hyperparams.mean_cov_prior            
+            params.R_adj_scale[:,:,i].flat[::X.shape[1] + 1] += hyperparams.mean_cov_prior
             weighted_mean = weighted_resp[:,i:i+1] * X + hyperparams.mean_cov_prior * \
-                            hyperparams.loc_prior[:,np.newaxis]
+                            hyperparams.loc_prior[np.newaxis,:]
             weighted_mean = np.matmul(params.scale_inv_[:,:,i], np.sum(weighted_mean, axis=0))
             params.loc_[i,:] = solve(params.R_adj_scale[:,:,i], weighted_mean)
         return params
@@ -432,7 +442,7 @@ class VariationalStudentMixture():
         weighted_resp_sum = np.sum(weighted_resp, axis=0)
         for i in range(self.n_components):
             x_weighted = weighted_resp[:,i:i+1] * X
-            X_X_outer_prod = np.matmul(x_weighted, X)
+            X_X_outer_prod = np.matmul(x_weighted.T, X)
             X_loc_outer_prod = -2 * np.sum(np.multiply.outer(x_weighted, params.loc_[i,:]),
                                            axis=0)
             loc_loc_outer = np.outer(params.loc_[i,:], params.loc_[i,:]) + params.R_adj_scale[:,:,i]
@@ -449,6 +459,9 @@ class VariationalStudentMixture():
             logdet_scale_inv += np.sum([digamma(0.5 * (wishart_dof_updated[i] + 1 - k)) for
                                         k in range(X.shape[1])])
             params.E_logdet_scale_inv[i] = logdet_scale_inv
+        #Update E_sq_maha_dist using the new scale and location parameters for the next resp
+        #calculation.
+        params = self.update_sq_maha_dist(X, params)
         return params
 
     
@@ -486,7 +499,7 @@ class VariationalStudentMixture():
         for i in range(self.n_components):
             E_log_p_scale_inv += -0.5 * np.trace(np.matmul(hyperparams.wishart_scale_inv,
                                                           params.scale_inv_[:,:,i]))
-            E_log_p_scale_inv += 0.5 * params.E_logdet_scale_inv * (hyperparams.wishart_dof
+            E_log_p_scale_inv += 0.5 * params.E_logdet_scale_inv[i] * (hyperparams.wishart_v0
                                                                     - X.shape[1] - 1)
             E_log_q_scale_inv += self.wishart_norm(params.scale_inv_chole_[:,:,i],
                                                    updated_alpha[i])
@@ -496,8 +509,8 @@ class VariationalStudentMixture():
             
         #Calculate terms involving log p(u | df) and log q(u).
         adj_df = 0.5 * params.df_
-        E_log_pGamma = (adj_df - 1)[:,np.newaxis] * params.E_log_gamma - \
-                       adj_df[:,np.newaxis] * params.E_gamma
+        E_log_pGamma = (adj_df - 1)[np.newaxis,:] * params.E_log_gamma - \
+                       adj_df[np.newaxis,:] * params.E_gamma
         E_log_pGamma = np.sum(E_log_pGamma) + np.sum(X.shape[0] * adj_df * np.log(adj_df)
                               - loggamma(adj_df))
         E_log_qGamma = (params.a_nm - 1) * digamma(params.a_nm) - params.a_nm + \
@@ -512,8 +525,8 @@ class VariationalStudentMixture():
         E_log_qmixweights += loggamma(np.sum(updated_alpha))
         
         #Calculate terms involving log p(s | prior) and log q(s)
-        E_log_presp = np.sum(params.E_resp * params.E_log_mixweights[:,np.newaxis])
-        E_log_qresp = np.sum(params.E_resp * np.log(params.E_resp))
+        E_log_presp = np.sum(params.E_resp * params.E_log_mixweights[np.newaxis,:])
+        E_log_qresp = np.sum(params.E_resp * np.log(np.clip(params.E_resp, a_min=1e-9, a_max=None)))
 
         #add it all up....
         lower_bound = E_log_pX + E_log_p_loc + E_log_p_scale_inv + E_log_pGamma + \
