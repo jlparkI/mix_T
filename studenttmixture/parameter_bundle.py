@@ -15,7 +15,7 @@ class ParameterBundle():
 
     def __init__(self, X, n_components, start_df, random_state):
         
-        self.loc_, self.scale_inv_, self.scale_inv_chole_ = \
+        self.loc_, self.scale_, self.scale_inv_chole_, self.scale_chole_ = \
                    self.initialize_params(X, n_components, random_state)
         self.df_ = np.full(shape=n_components, fill_value = start_df)
         #The following values are all expectations required for calculating the lower
@@ -24,9 +24,8 @@ class ParameterBundle():
         #values to each using a simple maximum likelihood procedure, then they will
         #be further updated during fitting.
         
-        #Resp is the responsibility of each component for each datapoint (<s_nm>
-        #using Bishop's notation).
-        self.E_resp = None
+        #Resp is the responsibility of each component for each datapoint.
+        self.resp = None
         
         #a_nm and b_nm are the parameters of the Gamma distribution that supplies the hidden
         #variable (below). Required for calculation of the variational lower bound.
@@ -40,20 +39,16 @@ class ParameterBundle():
         #of a student's t distribution as a Gaussian scale mixture.
         self.E_log_gamma = None
         
-        #The expectation of the log of the mixture weights.
-        self.E_log_mixweights = None
+        #The mixture weights.
+        self.mix_weights_ = None
         
         #The sum of the responsibilities for each component across all datapoints. Shape is dim K.
         self.Nk = None
 
-        #Matrix used for construction of the expected scale and location values.
-        self.R_adj_scale = None
-
-        #The expectation for the squared mahalanobis distance (w/r/t scale & location).
-        self.E_sq_maha_dist = None
-
-        #The expectation for the log of the determinant of the inverse of the scale matrix.
-        self.E_logdet_scale_inv = None
+        #Updated hyperparameters.
+        self.gamma_m = None
+        self.kappa_m = None
+        self.eta_m = None
 
         
         
@@ -82,11 +77,12 @@ class ParameterBundle():
                             np.eye(scale_cholesky_.shape[0]), lower=True).T
         scale_inv_cholesky_ = [scale_inv_cholesky_ for i in range(n_components)]
         scale_inv_cholesky_ = np.stack(scale_inv_cholesky_, axis=-1)
-        scale_inv_ = [np.matmul(scale_inv_cholesky_[:,:,i], scale_inv_cholesky_[:,:,i].T)
-                      for i in range(n_components)]
-        scale_inv_ = np.stack(scale_inv_, axis=-1)
+        scale_ = [default_scale_matrix for i in range(n_components)]
+        scale_ = np.stack(scale_, axis=-1)
+        scale_cholesky_ = [scale_cholesky_ for i in range(n_components)]
+        scale_cholesky_ = np.stack(scale_cholesky_, axis=-1)
 
-        return loc_, scale_inv_, scale_inv_cholesky_
+        return loc_, scale_, scale_inv_cholesky_, scale_cholesky_
 
 
 
