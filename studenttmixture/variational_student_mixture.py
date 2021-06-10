@@ -80,7 +80,7 @@ class VariationalStudentMixture():
     def __init__(self, n_components = 2, tol=1e-5, max_iter=1000, n_init=1,
             df = 4.0, fixed_df = True, random_state=123, verbose=True,
             init_type = "k++", scale_inv_prior=None, loc_prior=None,
-            mean_cov_prior = 1e-3, weight_conc_prior=1.0):
+            mean_cov_prior = 1, weight_conc_prior=1.0):
         self.check_user_params(n_components, tol, 1e-3, max_iter, n_init, df, random_state,
                 init_type)
         #General model parameters specified by user.
@@ -244,7 +244,7 @@ class VariationalStudentMixture():
             #If this is the best lower bound we've seen so far, update our saved
             #parameters using the parameter bundle and then discard it.
             elif lower_bound > best_lower_bound:
-                self.transfer_fit_params(param_bundle, hyperparams)
+                self.transfer_fit_params(X, param_bundle, hyperparams)
                 del param_bundle
                 self.converged_ = True
         if self.converged_ == False:
@@ -293,12 +293,8 @@ class VariationalStudentMixture():
             params = self.VariationalMStep(X, params, hyperparams)
             scales.append(params.scale_)
             locs.append(params.loc_)
-            try:
-                new_lower_bound = self.update_lower_bound(X, params, hyperparams,
+            new_lower_bound = self.update_lower_bound(X, params, hyperparams,
                                                           sq_maha_dist)
-            except:
-                import pdb
-                pdb.set_trace()
 
             change = new_lower_bound - old_lower_bound
             #For variational mean field as for EM, the lower bound will always increase, and this is in
@@ -312,7 +308,7 @@ class VariationalStudentMixture():
             old_lower_bound = new_lower_bound
             if self.verbose:
                 print("Change in lower bound: %s"%change)
-                print("Actual lower bound: %s" % new_lower_bound)
+                #print("Actual lower bound: %s" % new_lower_bound)
         return new_lower_bound, convergence, params
 
 
@@ -331,9 +327,11 @@ class VariationalStudentMixture():
     #params         --  The updated ParameterBundle.
     def initialize_expectations(self, X, params, hyperparams):
         params.eta_m = np.full(shape=self.n_components, fill_value = hyperparams.eta0)
-        params.mix_weights_ = np.full(shape = self.n_components, fill_value =
-                                          1 / self.n_components)
-        params.gamma_m = X.shape[0] * params.mix_weights_ + hyperparams.gamma0
+        
+        params.kappa_m = np.full(shape=self.n_components, fill_value = hyperparams.kappa0)
+        params.E_log_weights = digamma(params.kappa_m) - digamma(np.sum(params.kappa_m))
+        params.gamma_m = X.shape[0] * np.full(shape=self.n_components,
+                    fill_value = 1 / self.n_components) + hyperparams.gamma0
 
         
         params.E_logdet = -np.asarray([np.sum(np.log(np.diag(params.scale_chole_[:,:,i])))
@@ -348,13 +346,14 @@ class VariationalStudentMixture():
     #so they can be used to make predictions. This function performs the transfer.
     #INPUTS:
     #params         --  Object of class ParameterBundle holding all of the fit parameters.
-    def transfer_fit_params(self, params, hyperparams):
+    def transfer_fit_params(self, X, params, hyperparams):
         self.scale_inv_cholesky_ = params.scale_inv_chole_
         self.scale_ = params.scale_
         self.df_ = params.df_
         self.location_ = params.loc_
         updated_alpha = params.kappa_m
-        self.mix_weights = params.mix_weights_
+        self.mix_weights = params.kappa_m / (self.n_components * hyperparams.kappa0 + 
+                X.shape[0])
 
 
 #################################################################
@@ -370,9 +369,6 @@ class VariationalStudentMixture():
         with np.errstate(under="ignore"):
             params.resp = weighted_loglik - logsumexp(weighted_loglik, axis=1)[:,np.newaxis]
             params.resp = np.exp(params.resp)
-        if np.isnan(params.resp[0,0]):
-            import pdb
-            pdb.set_trace()
         params.a_nm = 0.5 * (X.shape[1] + params.df_)
         params.b_nm = 0.5 * params.gamma_m * sq_maha_dist + 0.5 * X.shape[1] / params.eta_m[np.newaxis,:]
         params.b_nm += 0.5 * params.df_[np.newaxis,:]
@@ -384,35 +380,36 @@ class VariationalStudentMixture():
 
     def VariationalMStep(self, X, params, hyperparams):
         ru = params.E_gamma * params.resp
-        params.resp_sum = np.sum(ru, axis=0) + 10 * np.finfo(params.resp.dtype).eps
-        params.mix_weights_ = np.mean(params.resp, axis=0)
-        params.kappa_m = X.shape[0] * params.mix_weights_ + hyperparams.kappa0
-        params.gamma_m = X.shape[0] * params.mix_weights_ + hyperparams.gamma0
-        params.eta_m = params.resp_sum + hyperparams.eta0
+        ru_sum = np.sum(ru, axis=0) + 10 * np.finfo(params.resp.dtype).eps
+        resp_sum = np.sum(params.resp, axis=0)
 
-        params.loc_ = np.dot((ru).T, X) / params.resp_sum[:, np.newaxis]
+        params.kappa_m = resp_sum + hyperparams.kappa0
+        params.gamma_m = resp_sum + hyperparams.gamma0
+        params.eta_m = ru_sum + hyperparams.eta0
+        
+        params.E_log_weights = digamma(params.kappa_m) - digamma(np.sum(params.kappa_m))
+
+        params.loc_ = np.dot((ru).T, X) / ru_sum[:, np.newaxis]
         for i in range(self.n_components):
             scaled_x = X - params.loc_[i,:][np.newaxis,:]
             params.scale_[:,:,i] = np.dot((ru[:,i:i+1] * scaled_x).T,
-                            scaled_x) / params.resp_sum[i]
-            params.scale_[:,:,i] = params.resp_sum[i] * params.scale_[:,:,i]
-            params.scale_[:,:,i] += params.resp_sum[i] * hyperparams.eta0 * np.outer(params.loc_[i,:] - hyperparams.loc_prior,
+                            scaled_x) / ru_sum[i]
+            params.scale_[:,:,i] = ru_sum[i] * params.scale_[:,:,i]
+            params.scale_[:,:,i] += ru_sum[i] * hyperparams.eta0 * np.outer(params.loc_[i,:] - hyperparams.loc_prior,
                                                 params.loc_[i,:] - hyperparams.loc_prior) / params.eta_m[i]
             params.scale_[:,:,i] += hyperparams.S0
             params.scale_chole_[:,:,i] = np.linalg.cholesky(params.scale_[:,:,i])
 
-            params.loc_[i,:] = params.loc_[i,:] * params.resp_sum[i] + hyperparams.eta0 * hyperparams.loc_prior
+            params.loc_[i,:] = params.loc_[i,:] * ru_sum[i] + hyperparams.eta0 * hyperparams.loc_prior
             params.loc_[i,:] = params.loc_[i,:] / params.eta_m[i]
-        try:
             params.scale_inv_chole_ = self.get_scale_inv_cholesky(params.scale_chole_, params.scale_inv_chole_)
-        except:
-            import pdb
-            pdb.set_trace()
+        
         params.E_logdet = -np.asarray([np.sum(np.log(np.diag(params.scale_chole_[:,:,i])))
                                                 for i in range(self.n_components)])
         params.E_logdet += X.shape[1] * np.log(2)
-        params.E_logdet += np.sum([digamma(0.5 * (params.gamma_m + 1 - i)) for i in
-                                   range(self.n_components)])
+        for i in range(self.n_components):
+            params.E_logdet[i] += np.sum([digamma(0.5 * (params.gamma_m[i] + 1 - j)) for j in
+                                   range(X.shape[1])])
         if self.fixed_df == False:
             params.df_ = self.optimize_df(X, params.resp, params.E_gamma, params.df_)
         return params
@@ -422,7 +419,7 @@ class VariationalStudentMixture():
         prefactor = loggamma(0.5 * (X.shape[1] + params.df_))
         prefactor -= (loggamma(0.5 * params.df_) + 0.5 * X.shape[1] * np.log(params.df_ * np.pi))
         
-        prefactor += np.log(params.mix_weights_) + params.E_logdet
+        prefactor += params.E_log_weights + params.E_logdet
         loglik = 1 + (params.gamma_m / params.df_) * sq_maha_dist
         loglik += X.shape[1] / (params.df_ * params.eta_m)
         loglik = prefactor - np.log(loglik) * (0.5 * (X.shape[1] + params.df_))
@@ -448,8 +445,7 @@ class VariationalStudentMixture():
         E_log_p_u = np.sum(E_log_p_u * params.resp)
 
         #Compute terms involving p(z)
-        E_log_pz = np.sum(params.resp * np.log(np.clip(params.mix_weights_[np.newaxis,:], a_min=1e-9,
-                                                       a_max=None)))
+        E_log_pz = np.sum(params.resp * params.E_log_weights)
 
         #Compute terms involving p_thetaS
         E_log_pthetaS = []
@@ -464,7 +460,7 @@ class VariationalStudentMixture():
         E_log_pthetaS -= hyperparams.eta0 * X.shape[0] / (2 * params.eta_m)
         E_log_pthetaS += params.E_logdet * (hyperparams.gamma0 - X.shape[1]) / 2
         E_log_pthetaS = np.sum(E_log_pthetaS) + np.sum((hyperparams.kappa0 - 1) *
-                            np.log(np.clip(params.mix_weights_, a_min=1e-9, a_max=None)))
+                            params.E_log_weights)
 
         #Compute terms involving q(u)
         E_log_qu = np.log(np.clip(params.b_nm, a_min=1e-9, a_max=None)) - params.a_nm[np.newaxis,:]
@@ -474,8 +470,7 @@ class VariationalStudentMixture():
 
         #Compute terms involving q_thetaS
         E_log_qthetaS = self.dirichlet_lognorm(params.kappa_m)
-        E_log_qthetaS += (params.kappa_m - 1) * np.log(np.clip(params.mix_weights_, a_min=1e-9,
-                                                                      a_max=None))
+        E_log_qthetaS += (params.kappa_m - 1) * params.E_log_weights
         E_log_qthetaS += X.shape[1] * 0.5 * np.log(np.clip(params.eta_m, a_min=1e-9, a_max=None))
         Cnw = [np.log(self.wishart_norm(params.scale_inv_chole_[:,:,i], params.gamma_m[i])) for
                       i in range(self.n_components)]

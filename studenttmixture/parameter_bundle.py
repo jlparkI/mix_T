@@ -39,9 +39,9 @@ class ParameterBundle():
         #of a student's t distribution as a Gaussian scale mixture.
         self.E_log_gamma = None
         
-        #The mixture weights.
-        self.mix_weights_ = None
-        
+        #The expectation of the log of the mixture weights.
+        self.E_log_weights = None
+
         #The sum of the responsibilities for each component across all datapoints. Shape is dim K.
         self.Nk = None
 
