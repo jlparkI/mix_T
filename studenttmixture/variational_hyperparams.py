@@ -36,7 +36,7 @@ class VariationalMixHyperparams():
 
         if self.S0 is None:
             #Default to a vague empirical prior if nothing else is supplied.
-            self.S0 = np.diag(np.diag(np.cov(X, rowvar=False)))
+            self.S0 = np.diag(1 / np.diag(np.cov(X, rowvar=False)))
         #Otherwise, check to make sure the prior the user chose was valid.
         else:
             if isinstance(self.S0, np.ndarray) == False:
@@ -46,3 +46,9 @@ class VariationalMixHyperparams():
             if self.S0.shape[0] != X.shape[1] or self.S0.shape[1] != X.shape[1]:
                 raise ValueError("The shape of scale_prior must match the "
                         "dimensionality of the training data!")
+
+        if self.gamma0 is None:
+            self.gamma0 = X.shape[1]
+        elif self.gamma0 < X.shape[1]:
+            raise ValueError("To ensure numerical stability, the dof parameter of the Wishart prior for the "
+                    "scale matrices should not be less than the number of features in the input.")
