@@ -62,6 +62,12 @@ from copy import copy
 #wishart_dof_prior  --  The dof parameter for the Wishart prior on the scale matrices.
 #                   Generally can be safely left as None, in which case it will be set to
 #                   the dimensionality of the input.
+#max_df         --  The maximum value for the degrees of freedom parameter. If there
+#                   is no max, the df can gradually creep higher for distributions that
+#                   are approximately normal, leading to very slow convergence since
+#                   the lower bound is still changing, but without really improving the
+#                   fit, since df values > 100 are approximately equivalent to a Gaussian.
+#                   The default is 100; set to np.inf to allow for no maximum df.
 
 #PARAMETERS FROM FIT:
 #mix_weights    --  The mixture weights for each component of the mixture; sums to one.
@@ -83,7 +89,8 @@ class VariationalStudentMixture():
     def __init__(self, n_components = 2, tol=1e-5, max_iter=1000, n_init=1,
             df = 4.0, fixed_df = True, random_state=123, verbose=True,
             init_type = "k++", scale_inv_prior=None, loc_prior=None,
-            mean_cov_prior = 1, weight_conc_prior=1.0, wishart_dof_prior = None):
+            mean_cov_prior = 1e-2, weight_conc_prior=1.0, wishart_dof_prior = None,
+            max_df = 100):
         self.check_user_params(n_components, tol, 1e-3, max_iter, n_init, df, random_state,
                 init_type)
         #General model parameters specified by user.
@@ -101,6 +108,11 @@ class VariationalStudentMixture():
         self.mean_cov_prior = mean_cov_prior
         self.weight_conc_prior = weight_conc_prior
         self.wishart_dof_prior = wishart_dof_prior
+        self.max_df = max_df
+        if self.max_df is None:
+            raise ValueError("max_df cannot be None!")
+        if self.max_df < 1:
+            raise ValueError("max_df cannot be < 1!")
         #the number of restarts -- this is different from max_iter, which is the maximum 
         #number of iterations per restart.
         self.n_init = n_init
@@ -405,7 +417,7 @@ class VariationalStudentMixture():
                                    range(X.shape[1])]) + X.shape[1] * np.log(2)
 
         if self.fixed_df == False:
-            params.df_ = self.optimize_df(X, params)
+            params = self.optimize_df(X, params, ru_sum, resp_sum)
         return params
         
 
@@ -512,14 +524,13 @@ class VariationalStudentMixture():
 
 
     #Optimizes the df parameter using Newton Raphson.
-    def optimize_df(self, X, params):
+    def optimize_df(self, X, params, ru_sum, resp_sum):
         #First calculate the constant term of the degrees of freedom optimization
         #expression so that it does not need to be recalculated on each iteration.
-        df_x_dim = 0.5 * (df_ + X.shape[1])
-        constant_term = 1.0 + (ru_sum / resp_sum) + digamma(df_x_dim) - \
-                    np.log(df_x_dim)
+        constant_term = params.resp * (params.E_log_gamma - params.E_gamma)
+        constant_term = np.sum(constant_term, axis=0) / resp_sum + 1
         for i in range(self.n_components):
-            optimal_df = newton(func = self.dof_first_deriv, x0 = df_[i],
+            optimal_df = newton(func = self.dof_first_deriv, x0 = params.df_[i],
                                  fprime = self.dof_second_deriv,
                                  fprime2 = self.dof_third_deriv,
                                  args = ([constant_term[i]]),  maxiter=self.max_iter,
@@ -530,18 +541,18 @@ class VariationalStudentMixture():
             #number of iterations per newton raphson optimization, or because
             #df is going to infinity, because the distribution is very close to 
             #normal. If it doesn't converge, keep the last estimated value.
-            if math.isnan(df_[i]) == False:
-                df_[i] = optimal_df
+            if math.isnan(optimal_df) == False:
+                params.df_[i] = optimal_df
             #DF should never be less than 1.
-            if df_[i] < 1:
-                df_[i] = 1.0
-            #To avoid issues with numerical stability in the df terms of the
+            if params.df_[i] < 1:
+                params.df_[i] = 1.0
+            #To avoid very large numbers in the df terms of the
             #variational lower bound, we also prevent the degrees of freedom from
             #going very high. Numbers >> 1000 will essentially all give very similar
             #results.
-            if df_[i] > 1000:
-                df_[i] = 1000
-        return df_
+            if params.df_[i] > self.max_df:
+                params.df_[i] = self.max_df
+        return params
 
 
     # First derivative of the complete data log likelihood w/r/t df. This is used to 
@@ -613,7 +624,7 @@ class VariationalStudentMixture():
         #into three convenient chunks that we sum on the last line.
         sq_maha_dist = -0.5*(df_[np.newaxis,:] + X.shape[1]) * np.log(sq_maha_dist)
         
-        const_term = gammaln(0.5*(df_ + X.shape[1])) - gammaln(0.5*df_)
+        const_term = loggamma(0.5*(df_ + X.shape[1])) - loggamma(0.5*df_)
         const_term = const_term - 0.5*X.shape[1]*(np.log(df_) + np.log(np.pi))
         
         scale_logdet = [np.sum(np.log(np.diag(scale_cholesky_[:,:,i])))

@@ -379,7 +379,7 @@ class EMStudentMixture():
             #number of iterations per newton raphson optimization, or because
             #df is going to infinity, because the distribution is very close to 
             #normal. If it doesn't converge, keep the last estimated value.
-            if math.isnan(df_[i]) == False:
+            if math.isnan(optimal_df) == False:
                 df_[i] = optimal_df
             #DF should never be less than 1 but can go arbitrarily high.
             if df_[i] < 1:
