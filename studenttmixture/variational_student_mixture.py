@@ -291,8 +291,6 @@ class VariationalStudentMixture():
         
             params, sq_maha_dist = self.VariationalEStep(X, params)
             params = self.VariationalMStep(X, params, hyperparams)
-            scales.append(params.scale_)
-            locs.append(params.loc_)
             new_lower_bound = self.update_lower_bound(X, params, hyperparams,
                                                           sq_maha_dist)
 
@@ -326,7 +324,8 @@ class VariationalStudentMixture():
     #OUTPUTS:
     #params         --  The updated ParameterBundle.
     def initialize_expectations(self, X, params, hyperparams):
-        params.eta_m = np.full(shape=self.n_components, fill_value = hyperparams.eta0)
+        params.eta_m = np.full(shape=self.n_components, 
+                fill_value = hyperparams.eta0)
         
         params.kappa_m = np.full(shape=self.n_components, fill_value = hyperparams.kappa0)
         params.E_log_weights = digamma(params.kappa_m) - digamma(np.sum(params.kappa_m))
@@ -370,7 +369,8 @@ class VariationalStudentMixture():
             params.resp = weighted_loglik - logsumexp(weighted_loglik, axis=1)[:,np.newaxis]
             params.resp = np.exp(params.resp)
         params.a_nm = 0.5 * (X.shape[1] + params.df_)
-        params.b_nm = 0.5 * params.gamma_m * sq_maha_dist + 0.5 * X.shape[1] / params.eta_m[np.newaxis,:]
+        params.b_nm = 0.5 * params.gamma_m[np.newaxis,:] * sq_maha_dist +\
+                0.5 * X.shape[1] / params.eta_m[np.newaxis,:]
         params.b_nm += 0.5 * params.df_[np.newaxis,:]
         params.E_gamma = params.a_nm[np.newaxis,:] / params.b_nm
         params.E_log_gamma = digamma(params.a_nm[np.newaxis,:]) - np.log(np.clip(params.b_nm, a_min=1e-9,
@@ -381,35 +381,39 @@ class VariationalStudentMixture():
     def VariationalMStep(self, X, params, hyperparams):
         ru = params.E_gamma * params.resp
         ru_sum = np.sum(ru, axis=0) + 10 * np.finfo(params.resp.dtype).eps
-        resp_sum = np.sum(params.resp, axis=0)
+        resp_sum = np.sum(params.resp, axis=0) + 10 * np.finfo(params.resp.dtype).eps
+
 
         params.kappa_m = resp_sum + hyperparams.kappa0
         params.gamma_m = resp_sum + hyperparams.gamma0
         params.eta_m = ru_sum + hyperparams.eta0
         
         params.E_log_weights = digamma(params.kappa_m) - digamma(np.sum(params.kappa_m))
-
-        params.loc_ = np.dot((ru).T, X) / ru_sum[:, np.newaxis]
+        
+        params.loc_ = np.dot((ru).T, X)
+        params.loc_ = params.loc_ / ru_sum[:,np.newaxis]
+        
         for i in range(self.n_components):
             scaled_x = X - params.loc_[i,:][np.newaxis,:]
-            params.scale_[:,:,i] = np.dot((ru[:,i:i+1] * scaled_x).T,
-                            scaled_x) / ru_sum[i]
-            params.scale_[:,:,i] = ru_sum[i] * params.scale_[:,:,i]
-            params.scale_[:,:,i] += ru_sum[i] * hyperparams.eta0 * np.outer(params.loc_[i,:] - hyperparams.loc_prior,
-                                                params.loc_[i,:] - hyperparams.loc_prior) / params.eta_m[i]
+            params.scale_[:,:,i] = np.dot((ru[:,i:i+1] * scaled_x).T, scaled_x)
+            loc_vs_prior = params.loc_[i,:] - hyperparams.loc_prior
+            params.scale_[:,:,i] += ru_sum[i] * hyperparams.eta0 * np.outer(loc_vs_prior,
+                                                loc_vs_prior) / params.eta_m[i]
             params.scale_[:,:,i] += hyperparams.S0
             params.scale_chole_[:,:,i] = np.linalg.cholesky(params.scale_[:,:,i])
 
             params.loc_[i,:] = params.loc_[i,:] * ru_sum[i] + hyperparams.eta0 * hyperparams.loc_prior
             params.loc_[i,:] = params.loc_[i,:] / params.eta_m[i]
-            params.scale_inv_chole_ = self.get_scale_inv_cholesky(params.scale_chole_, params.scale_inv_chole_)
-        
-        params.E_logdet = -np.asarray([np.sum(np.log(np.diag(params.scale_chole_[:,:,i])))
+            
+
+        params.scale_inv_chole_ = self.get_scale_inv_cholesky(params.scale_chole_, 
+                                        params.scale_inv_chole_)
+        params.E_logdet = -np.asarray([2 * np.sum(np.log(np.diag(params.scale_chole_[:,:,i])))
                                                 for i in range(self.n_components)])
-        params.E_logdet += X.shape[1] * np.log(2)
         for i in range(self.n_components):
-            params.E_logdet[i] += np.sum([digamma(0.5 * (params.gamma_m[i] + 1 - j)) for j in
-                                   range(X.shape[1])])
+            params.E_logdet[i] += np.sum([digamma(0.5 * (params.gamma_m[i] - j)) for j in
+                                   range(X.shape[1])]) + X.shape[1] * np.log(2)
+
         if self.fixed_df == False:
             params.df_ = self.optimize_df(X, params.resp, params.E_gamma, params.df_)
         return params
@@ -419,10 +423,10 @@ class VariationalStudentMixture():
         prefactor = loggamma(0.5 * (X.shape[1] + params.df_))
         prefactor -= (loggamma(0.5 * params.df_) + 0.5 * X.shape[1] * np.log(params.df_ * np.pi))
         
-        prefactor += params.E_log_weights + params.E_logdet
-        loglik = 1 + (params.gamma_m / params.df_) * sq_maha_dist
-        loglik += X.shape[1] / (params.df_ * params.eta_m)
-        loglik = prefactor - np.log(loglik) * (0.5 * (X.shape[1] + params.df_))
+        prefactor += params.E_log_weights + 0.5 * params.E_logdet
+        loglik = 1 + (params.gamma_m / params.df_)[np.newaxis,:] * sq_maha_dist
+        loglik += (X.shape[1] / (params.df_ * params.eta_m))[np.newaxis,:]
+        loglik = prefactor[np.newaxis,:] - np.log(loglik) * (0.5 * (X.shape[1] + params.df_)[np.newaxis,:])
         return loglik
     
 
@@ -433,53 +437,60 @@ class VariationalStudentMixture():
     #and there's only so far that we can simplify it.
     def update_lower_bound(self, X, params, hyperparams, sq_maha_dist):
         #compute terms involving p(X | params)
-        E_log_pX = -0.5 * X.shape[1] * np.log(2 * np.pi) + 0.5 * X.shape[1] * np.log(params.E_gamma)
+        E_log_pX = -0.5 * X.shape[1] * np.log(2 * np.pi) + 0.5 * X.shape[1] * params.E_log_gamma
         E_log_pX += 0.5 * params.E_logdet - 0.5 * params.E_gamma * params.gamma_m[np.newaxis,:] * sq_maha_dist
         E_log_pX -= params.E_gamma * X.shape[1] / (2 * params.eta_m[np.newaxis,:])
-        E_log_pX = np.sum(E_log_pX)
+        E_log_pX = np.sum(params.resp * E_log_pX)
 
         #compute terms involving p(u | other params)
         E_log_p_u = 0.5 * params.df_ * np.log(0.5 * params.df_) - loggamma(0.5 * params.df_)
-        E_log_p_u = E_log_p_u[np.newaxis,:] + (0.5 * params.df_[np.newaxis,:] - 1) * np.log(params.E_gamma)
+        E_log_p_u = E_log_p_u[np.newaxis,:] + (0.5 * params.df_[np.newaxis,:] - 1) * params.E_log_gamma
         E_log_p_u -= 0.5 * params.df_[np.newaxis,:] * params.E_gamma
         E_log_p_u = np.sum(E_log_p_u * params.resp)
 
         #Compute terms involving p(z)
-        E_log_pz = np.sum(params.resp * params.E_log_weights)
+        E_log_pz = np.sum(params.resp * params.E_log_weights[np.newaxis,:])
 
         #Compute terms involving p_thetaS
-        E_log_pthetaS = []
+        E_log_pthetaS_raw = []
         for i in range(self.n_components):
-            mean_offset = -np.dot(params.loc_[i,:] -
+            mean_offset = np.matmul(params.loc_[i,:] -
                                     hyperparams.loc_prior, params.scale_inv_chole_[:,:,i])
-            mean_offset = np.sum(mean_offset**2) * params.gamma_m[i] * 0.5 * hyperparams.eta0
+            mean_offset = -np.sum(mean_offset**2) * params.gamma_m[i] * 0.5 * hyperparams.eta0
             trace_term = np.trace(np.matmul(hyperparams.S0, np.matmul(params.scale_inv_chole_[:,:,i],
                                                                       params.scale_inv_chole_[:,:,i].T)))
-            E_log_pthetaS.append(mean_offset - trace_term)
-        E_log_pthetaS = np.asarray(E_log_pthetaS)
-        E_log_pthetaS -= hyperparams.eta0 * X.shape[0] / (2 * params.eta_m)
+            E_log_pthetaS_raw.append(mean_offset - 0.5 * params.gamma_m[i] * trace_term)
+        E_log_pthetaS = np.asarray(E_log_pthetaS_raw)
+        E_log_pthetaS -= hyperparams.eta0 * X.shape[1] / (2 * params.eta_m)
         E_log_pthetaS += params.E_logdet * (hyperparams.gamma0 - X.shape[1]) / 2
         E_log_pthetaS = np.sum(E_log_pthetaS) + np.sum((hyperparams.kappa0 - 1) *
                             params.E_log_weights)
-
+        
         #Compute terms involving q(u)
         E_log_qu = np.log(np.clip(params.b_nm, a_min=1e-9, a_max=None)) - params.a_nm[np.newaxis,:]
-        E_log_qu += (params.a_nm - 1) * digamma(params.a_nm)[np.newaxis,:]
+        E_log_qu += ((params.a_nm - 1) * digamma(params.a_nm))[np.newaxis,:]
         E_log_qu -= loggamma(params.a_nm)[np.newaxis,:]
         E_log_qu = np.sum(params.resp * E_log_qu)
 
         #Compute terms involving q_thetaS
-        E_log_qthetaS = self.dirichlet_lognorm(params.kappa_m)
-        E_log_qthetaS += (params.kappa_m - 1) * params.E_log_weights
-        E_log_qthetaS += X.shape[1] * 0.5 * np.log(np.clip(params.eta_m, a_min=1e-9, a_max=None))
-        Cnw = [np.log(self.wishart_norm(params.scale_inv_chole_[:,:,i], params.gamma_m[i])) for
-                      i in range(self.n_components)]
-        E_log_qthetaS += Cnw + 0.5 * (params.gamma_m - X.shape[1]) * params.E_logdet
+        E_log_qthetaS = X.shape[1] * 0.5 * np.log(np.clip(params.eta_m, a_min=1e-9, a_max=None))
+        Cnw = [self.wishart_norm(params.scale_chole_[:,:,i], params.gamma_m[i],
+                    return_log = True) for i in range(self.n_components)]
+        E_log_qthetaS += 0.5 * (params.gamma_m - X.shape[1]) * params.E_logdet
         E_log_qthetaS -= params.gamma_m * X.shape[1] * 0.5
-        E_log_qthetaS = np.sum(E_log_qthetaS)
+        E_log_qthetaS = np.sum(E_log_qthetaS) + self.dirichlet_lognorm(params.kappa_m) + \
+                            np.sum((params.kappa_m - 1) * params.E_log_weights)
+        E_log_qthetaS += np.sum(Cnw)
+
+
+        #Compute terms involving q_z
+        E_log_qz = np.sum(params.resp * np.log(np.clip(params.resp, a_min=1e-9, a_max=None)))
+
 
         #Add it all up....                                             
-        lower_bound = E_log_pX + E_log_p_u + E_log_pthetaS - E_log_qu - E_log_qthetaS + E_log_pz
+        lower_bound = E_log_pX + E_log_p_u + E_log_pthetaS - E_log_qu - E_log_qthetaS  \
+                - E_log_qz + E_log_pz
+        
         return lower_bound
 
 
@@ -488,21 +499,21 @@ class VariationalStudentMixture():
     #calculating the variational lower bound). The normalization term is calculated
     #for one component only, so caller must loop over components to get the normalization
     #term for all components as required for the variational lower bound.
-    def wishart_norm(self, W_cholesky, eta):
+    def wishart_norm(self, W_cholesky, eta, return_log = False):
         logdet_term = -eta * np.sum(np.log(np.diag(W_cholesky)))
-        inverse_term = np.asarray([gamma( 0.5 * (eta + 1 - i)) for i in range(W_cholesky.shape[0] - 1)])
-        inverse_term = np.prod(inverse_term) * (2 ** (0.5 * eta * W_cholesky.shape[0]))
-        inverse_term *= np.pi ** (W_cholesky.shape[0] * (W_cholesky.shape[0] - 1) / 4)
-        if np.isnan(logdet_term) or np.isnan(inverse_term) or np.isnan(logdet_term / inverse_term):
-            import pdb
-            pdb.set_trace()
-        return logdet_term / inverse_term
+        inverse_term = np.asarray([loggamma( 0.5 * (eta + i)) for i in 
+                    range(W_cholesky.shape[0])])
+        inverse_term = np.sum(inverse_term) + (np.log(2) * (0.5 * eta * W_cholesky.shape[0]))
+        inverse_term += np.log(np.pi) * (W_cholesky.shape[0] * (W_cholesky.shape[0] - 1) / 4)
+        if return_log:
+            return logdet_term - inverse_term
+        return np.exp(logdet_term - inverse_term)
 
     #Gets the log normalization term for the Dirichlet distribution (only required for calculating
     #the variational lower bound). The normalization term is calculated across all components
     #so caller only need call once.
     def dirichlet_lognorm(self, kappa):
-        return loggamma(kappa)  - loggamma(np.sum(kappa))
+        return loggamma(np.sum(kappa))  - np.sum(loggamma(kappa))
 
 
     '''End in progress section.'''

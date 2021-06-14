@@ -35,8 +35,8 @@ class VariationalMixHyperparams():
                         "dimensionality of the training data!")
 
         if self.S0 is None:
-            #Default to an identity matrix if nothing is supplied.
-            self.S0 = np.eye(X.shape[1])
+            #Default to a vague empirical prior if nothing else is supplied.
+            self.S0 = np.diag(np.diag(np.cov(X, rowvar=False)))
         #Otherwise, check to make sure the prior the user chose was valid.
         else:
             if isinstance(self.S0, np.ndarray) == False:
