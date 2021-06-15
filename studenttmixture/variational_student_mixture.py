@@ -452,8 +452,7 @@ class VariationalStudentMixture():
         #compute terms involving p(u | other params)
         half_df = params.df_ * 0.5
         E_log_p_u = (half_df[np.newaxis,:] - 1) * params.E_log_gamma
-        E_log_p_u += (half_df * np.log(half_df) - np.clip(loggamma(half_df),
-                        a_min=None, a_max=1000))[np.newaxis,:]
+        E_log_p_u += (half_df * np.log(half_df) - loggamma(half_df)[np.newaxis,:]
         E_log_p_u -= half_df[np.newaxis,:] * params.E_gamma
         E_log_p_u = np.sum(E_log_p_u * params.resp)
         
