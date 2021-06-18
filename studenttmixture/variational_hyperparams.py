@@ -17,7 +17,7 @@ class VariationalMixHyperparams():
         self.S0 = scale_inv_prior
         self.kappa0 = weight_concentration_prior
         self.eta0 = mean_covariance_prior
-        self.gamma0 = wishart_v0
+        self.wishart_v0 = wishart_v0
 
     #Check the user specified hyperparameters and if needed update loc_prior and scale_prior,
     #which the user is allowed to set to None, to data driven values.
@@ -47,8 +47,8 @@ class VariationalMixHyperparams():
                 raise ValueError("The shape of scale_prior must match the "
                         "dimensionality of the training data!")
 
-        if self.gamma0 is None:
-            self.gamma0 = X.shape[1]
-        elif self.gamma0 < X.shape[1]:
+        if self.wishart_v0 is None:
+            self.wishart_v0 = X.shape[1]
+        elif self.wishart_v0 < X.shape[1]:
             raise ValueError("To ensure numerical stability, the dof parameter of the Wishart prior for the "
                     "scale matrices should not be less than the number of features in the input.")

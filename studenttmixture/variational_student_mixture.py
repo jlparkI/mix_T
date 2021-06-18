@@ -86,10 +86,10 @@ from copy import copy
 
 class VariationalStudentMixture():
 
-    def __init__(self, n_components = 2, tol=1e-5, max_iter=1000, n_init=1,
+    def __init__(self, n_components = 2, tol=1e-4, max_iter=2000, n_init=1,
             df = 4.0, fixed_df = True, random_state=123, verbose=True,
             init_type = "k++", scale_inv_prior=None, loc_prior=None,
-            mean_cov_prior = 1e-2, weight_conc_prior=1.0, wishart_dof_prior = None,
+            mean_cov_prior = 1e-2, weight_conc_prior=None, wishart_dof_prior = None,
             max_df = 100):
         self.check_user_params(n_components, tol, 1e-3, max_iter, n_init, df, random_state,
                 init_type)
@@ -128,6 +128,8 @@ class VariationalStudentMixture():
         self.converged_ = False
         self.n_iter_ = 0
         self.df_ = None
+
+        self.resp = None
 
     #Function to check the user specified model parameters for validity.
     def check_user_params(self, n_components, tol, reg_covar, max_iter, n_init, df, random_state,
@@ -303,9 +305,9 @@ class VariationalStudentMixture():
         scales, locs = [], []
         for i in range(self.max_iter):
             params, sq_maha_dist = self.VariationalEStep(X, params)
+            params = self.VariationalMStep(X, params, hyperparams)
             new_lower_bound = self.update_lower_bound(X, params, hyperparams,
                                                           sq_maha_dist)
-            params = self.VariationalMStep(X, params, hyperparams)
 
             change = new_lower_bound - old_lower_bound
             if abs(change) < self.tol:
@@ -313,8 +315,7 @@ class VariationalStudentMixture():
                 break
             old_lower_bound = copy(new_lower_bound)
             if self.verbose:
-                print("Change in lower bound: %s"%change)
-                #print("Actual lower bound: %s" % new_lower_bound)
+                print("Actual lower bound: %s" % new_lower_bound)
         return new_lower_bound, convergence, params
 
 
@@ -337,15 +338,26 @@ class VariationalStudentMixture():
         
         params.kappa_m = np.full(shape=self.n_components, fill_value = hyperparams.kappa0)
         params.E_log_weights = digamma(params.kappa_m) - digamma(np.sum(params.kappa_m))
-        params.gamma_m = X.shape[0] * np.full(shape=self.n_components,
-                    fill_value = 1 / self.n_components) + hyperparams.gamma0
+        params.wishart_vm = X.shape[0] * np.full(shape=self.n_components,
+                    fill_value = 1 / self.n_components) + hyperparams.wishart_v0
 
         
-        params.E_logdet = -2 * np.asarray([np.sum(np.log(np.diag(params.scale_chole_[:,:,i])))
+        params.E_logdet = 2 * np.asarray([np.sum(np.log(np.diag(params.scale_inv_chole_[:,:,i])))
                                                 for i in range(self.n_components)])
         params.E_logdet += X.shape[1] * np.log(2)
-        params.E_logdet += np.sum([digamma(0.5 * (params.gamma_m - i)) for i in
+        params.E_logdet += np.sum([digamma(0.5 * (params.wishart_vm[0] - i)) for i in
                                    range(self.n_components)])
+
+        params.resp = np.zeros((X.shape[0], self.n_components))
+        sq_maha_dist = self.sq_maha_distance(X, params.loc_, params.scale_inv_chole_)
+        assigned_comp = np.argmin(sq_maha_dist, axis=1)
+        params.resp[np.arange(X.shape[0]), assigned_comp] = 1.0
+        params.a_nm = 0.5 * (params.resp * X.shape[1] + params.df_[np.newaxis,:])
+        params.b_nm = 0.5 * (params.resp * sq_maha_dist + params.df_[np.newaxis,:])
+        params.E_gamma = params.a_nm / params.b_nm
+        params.E_log_gamma = digamma(params.a_nm) - np.log(np.clip(params.b_nm, a_min=1e-12,
+                                                                                 a_max=None))
+        
         return params
 
     #At the end of fitting, the parameters need to be transferred from the ParameterBundle
@@ -354,32 +366,79 @@ class VariationalStudentMixture():
     #INPUTS:
     #params         --  Object of class ParameterBundle holding all of the fit parameters.
     def transfer_fit_params(self, X, params, hyperparams):
-        self.scale_inv_cholesky_ = params.scale_inv_chole_
-        self.scale_ = params.scale_
+        self.scale_, self.scale_inv_cholesky_, self.scale_cholesky_ = np.empty_like(params.scale_),\
+                                                np.empty_like(params.scale_), np.empty_like(params.scale_)
+        for i in range(self.n_components):
+            self.scale_[:,:,i] = params.scale_[:,:,i] / params.wishart_vm[i]
+            self.scale_cholesky_[:,:,i] = np.linalg.cholesky(self.scale_[:,:,i])
+        self.scale_inv_cholesky_ = self.get_scale_inv_cholesky(self.scale_cholesky_, 
+                                        self.scale_inv_cholesky_)
         self.df_ = params.df_
         self.location_ = params.loc_
         updated_alpha = params.kappa_m
         self.mix_weights = params.kappa_m / (self.n_components * hyperparams.kappa0 + 
                 X.shape[0])
+        self.resp = params.resp
 
-
-    #The equivalent
+    #The equivalent of the E step in the EM algorithm but for the variational algorithm.
+    #Despite some superficial resemblances and shared calculations, this algorithm makes 
+    #very different assumptions.
+    #
+    #Parameters that are updated:
+    #sq_maha_dist   --  the squared mahalanobis distance, N x K for K components;
+    #params.resp    --  the responsibility of each component for each datapoint, N x K;
+    #params.a_nm    --  the first parameter of the gamma distribution that generates
+    #                   the "hidden variable" in the Gaussian scale mixture rep of the
+    #                   student's t for each datapoint. Shape K for K components.
+    #params.b_nm    --  the second parameter of the gamma distribution that etc. N x K
+    #                   for N samples, K components.
+    #params.E_gamma --  The expectation of the gamma hidden variable. N x K for K
+    #                   components. Mean of a gamma distribution is just a / b.
+    #params.E_log_gamma --  The expectation of the log of the hidden variable.
     def VariationalEStep(self, X, params):
         sq_maha_dist = self.sq_maha_distance(X, params.loc_, params.scale_inv_chole_)
-        weighted_loglik = self.weighted_loglik(X, params, sq_maha_dist)
+        sq_maha_dist = sq_maha_dist * params.wishart_vm[np.newaxis,:] + \
+                       X.shape[1] / params.eta_m[np.newaxis,:]
+        weighted_loglik = self.variational_loglik(X, params, sq_maha_dist)
         with np.errstate(under="ignore"):
             params.resp = weighted_loglik - logsumexp(weighted_loglik, axis=1)[:,np.newaxis]
             params.resp = np.exp(params.resp)
-        params.a_nm = 0.5 * (X.shape[1] + params.df_)
-        params.b_nm = 0.5 * params.gamma_m[np.newaxis,:] * sq_maha_dist +\
-                0.5 * X.shape[1] / params.eta_m[np.newaxis,:]
-        params.b_nm += 0.5 * params.df_[np.newaxis,:]
-        params.E_gamma = params.a_nm[np.newaxis,:] / params.b_nm
-        params.E_log_gamma = digamma(params.a_nm[np.newaxis,:]) - np.log(np.clip(params.b_nm, a_min=1e-9,
+        params.a_nm = 0.5 * (params.resp * X.shape[1] + params.df_[np.newaxis,:])
+        params.b_nm = 0.5 * params.resp * sq_maha_dist + 0.5 * params.df_[np.newaxis,:]
+        params.E_gamma = params.a_nm / params.b_nm
+        params.E_log_gamma = digamma(params.a_nm) - np.log(np.clip(params.b_nm, a_min=1e-12,
                                                                                  a_max=None))
         return params, sq_maha_dist
 
+    #This function is used by the E-step to calculate responsibilities during training. It is slightly
+    #different from the more straightforward likelihood calculation employed for a fitted model
+    #(which is identical to EM) -- remember, despite the superficial similarities, the 
+    #variational model is derived in a very different way, and has some important differences!
+    def variational_loglik(self, X, params, sq_maha_dist):
+        loglik = 0.5 * params.E_logdet[np.newaxis,:] - 0.5 * X.shape[1] * (np.log(2 * np.pi) - params.E_log_gamma)
+        loglik += params.E_log_weights
+        loglik -= 0.5 * params.E_gamma * sq_maha_dist
+        return loglik
+   
 
+    #The equivalent of the M step in the EM algorithm but for the variational algorithm.
+    #Despite some superficial resemblances and shared calculations, this algorithm makes 
+    #very different assumptions.
+    #
+    #Parameters that are updated:
+    #params.kappa_m     --  The updated parameters of the dirichlet distribution. Shape is K
+    #                       for K components.
+    #params.gamma_m     --  The updated dof parameters of the Wishart distributions
+    #                       that generate the scale matrices for each component. Shape is K.
+    #params.eta_m       --  The updated mean covariance prior. SHape is K.
+    #params.loc_        --  The location of each component (analogous to mean of a Gaussian). Shape
+    #                       is K x D for K components, D dimensions.
+    #params.scale_      --  The updated scale matrices (analogous to covariance for a Gaussian).
+    #                       Shape is D x D x K for K components, D dimensions.
+    #   Both the cholesky decomposition of the scale matrices and the inverse of this
+    #   cholesky decomposition are stored as well.
+    #params.df_         --  Degrees of freedom for each component, shape K. Updated if user
+    #                       so specified.
     def VariationalMStep(self, X, params, hyperparams):
         ru = params.E_gamma * params.resp
         ru_sum = np.sum(ru, axis=0) + 10 * np.finfo(params.resp.dtype).eps
@@ -387,7 +446,7 @@ class VariationalStudentMixture():
 
 
         params.kappa_m = resp_sum + hyperparams.kappa0
-        params.gamma_m = resp_sum + hyperparams.gamma0
+        params.wishart_vm = resp_sum + hyperparams.wishart_v0
         params.eta_m = ru_sum + hyperparams.eta0
         
         params.E_log_weights = digamma(params.kappa_m) - digamma(np.sum(params.kappa_m))
@@ -410,26 +469,16 @@ class VariationalStudentMixture():
 
         params.scale_inv_chole_ = self.get_scale_inv_cholesky(params.scale_chole_, 
                                         params.scale_inv_chole_)
-        params.E_logdet = -np.asarray([2 * np.sum(np.log(np.diag(params.scale_chole_[:,:,i])))
+        params.E_logdet = 2 * np.asarray([np.sum(np.log(np.diag(params.scale_inv_chole_[:,:,i])))
                                                 for i in range(self.n_components)])
         for i in range(self.n_components):
-            params.E_logdet[i] += np.sum([digamma(0.5 * (params.gamma_m[i] - j)) for j in
+            params.E_logdet[i] += np.sum([digamma(0.5 * (params.wishart_vm[i] - j)) for j in
                                    range(X.shape[1])]) + X.shape[1] * np.log(2)
-
         if self.fixed_df == False:
             params = self.optimize_df(X, params, ru_sum, resp_sum)
         return params
         
 
-    def weighted_loglik(self, X, params, sq_maha_dist):
-        prefactor = loggamma(0.5 * (X.shape[1] + params.df_))
-        prefactor -= (loggamma(0.5 * params.df_) + 0.5 * X.shape[1] * np.log(params.df_ * np.pi))
-        
-        prefactor += params.E_log_weights + 0.5 * params.E_logdet
-        loglik = 1 + (params.gamma_m / params.df_)[np.newaxis,:] * sq_maha_dist
-        loglik += (X.shape[1] / (params.df_ * params.eta_m))[np.newaxis,:]
-        loglik = prefactor[np.newaxis,:] - np.log(loglik) * (0.5 * (X.shape[1] + params.df_)[np.newaxis,:])
-        return loglik
     
 
     #Updates the variational lower bound so we can assess convergence. We leave out
@@ -444,30 +493,27 @@ class VariationalStudentMixture():
     #is possible.
     def update_lower_bound(self, X, params, hyperparams, sq_maha_dist):
         #compute terms involving p(X | params)
-        E_log_pX = -0.5 * X.shape[1] * np.log(2 * np.pi) + 0.5 * X.shape[1] * params.E_log_gamma
-        E_log_pX += 0.5 * params.E_logdet - 0.5 * params.E_gamma * params.gamma_m[np.newaxis,:] * sq_maha_dist
-        E_log_pX -= params.E_gamma * X.shape[1] / (2 * params.eta_m[np.newaxis,:])
-        E_log_pX = np.sum(params.resp * E_log_pX)
+        E_log_pX = -X.shape[1] * np.log(2 * np.pi) + X.shape[1] * params.E_log_gamma
+        E_log_pX += params.E_logdet - params.E_gamma * sq_maha_dist
+        E_log_pX = 0.5 * np.sum(params.resp * E_log_pX)
 
         #compute terms involving p(u | other params)
         half_df = params.df_ * 0.5
         E_log_p_u = (half_df[np.newaxis,:] - 1) * params.E_log_gamma
-        E_log_p_u += (half_df * np.log(half_df) - loggamma(half_df)[np.newaxis,:]
         E_log_p_u -= half_df[np.newaxis,:] * params.E_gamma
-        E_log_p_u = np.sum(E_log_p_u * params.resp)
+        E_log_p_u = np.sum(E_log_p_u, axis=0)
+        E_log_p_u += X.shape[0] * (half_df * np.log(half_df) - loggamma(half_df))
+        E_log_p_u = np.sum(E_log_p_u)
         
-        #Compute terms involving p_thetaS
-        E_log_pthetaS = -hyperparams.eta0 * X.shape[1] / (2 * params.eta_m)
-        E_log_pthetaS += params.E_logdet * (hyperparams.gamma0 - X.shape[1]) / 2
-        E_log_pthetaS = np.sum(E_log_pthetaS) + np.sum((hyperparams.kappa0 - 1) *
-                            params.E_log_weights)
+        #Compute terms involving p_mu, p_scale
+        E_log_pthetaS = X.shape[1] * np.log(hyperparams.eta0 / (2 * np.pi)) - hyperparams.eta0 * sq_maha_dist
+        E_log_pthetaS += ((hyperparams.wishart_v0 - X.shape[1] + 1) * 0.5 * params.E_logdet)[np.newaxis,:]
+        E_log_pthetaS = np.sum(E_log_pthetaS)
         for i in range(self.n_components):
-            mean_offset = np.matmul(params.loc_[i,:] -
-                                    hyperparams.loc_prior, params.scale_inv_chole_[:,:,i])
-            mean_offset = -np.sum(mean_offset**2) * params.gamma_m[i] * 0.5 * hyperparams.eta0
             trace_term = np.trace(np.matmul(hyperparams.S0, np.matmul(params.scale_inv_chole_[:,:,i],
                                                                       params.scale_inv_chole_[:,:,i].T)))
-            E_log_pthetaS += mean_offset - 0.5 * params.gamma_m[i] * trace_term
+            E_log_pthetaS -= 0.5 * params.wishart_vm[i] * trace_term
+        E_log_pthetaS = 0.5 * E_log_pthetaS
 
 
         #Compute terms involving p(z)
@@ -477,25 +523,29 @@ class VariationalStudentMixture():
         E_log_qz = np.sum(params.resp * np.log(np.clip(params.resp, a_min=1e-12, a_max=None)))
         
         #Compute terms involving q(u)
-        E_log_qu = np.log(np.clip(params.b_nm, a_min=1e-12, a_max=None)) - params.a_nm[np.newaxis,:]
-        E_log_qu += ((params.a_nm - 1) * digamma(params.a_nm))[np.newaxis,:]
-        E_log_qu -= loggamma(params.a_nm)[np.newaxis,:]
-        E_log_qu = np.sum(params.resp * E_log_qu)
+        E_log_qu = ((params.a_nm - 1) * digamma(params.a_nm))
+        E_log_qu -= loggamma(params.a_nm)
+        E_log_qu = np.sum(E_log_qu - params.E_log_gamma)
 
         #Compute terms involving q_thetaS
-        E_log_qthetaS = X.shape[1] * 0.5 * np.log(np.clip(params.eta_m, a_min=1e-12, a_max=None))
-        Cnw = [self.wishart_norm(params.scale_chole_[:,:,i], params.gamma_m[i],
+        E_log_qthetaS = X.shape[1] * 0.5 * np.log(np.clip(params.wishart_vm / (2 * np.pi), a_min=1e-12, a_max=None))
+        Cnw = [self.wishart_norm(params.scale_inv_chole_[:,:,i], params.wishart_vm[i],
                     return_log = True) for i in range(self.n_components)]
-        E_log_qthetaS += 0.5 * (params.gamma_m - X.shape[1]) * params.E_logdet
-        E_log_qthetaS -= params.gamma_m * X.shape[1] * 0.5
-        E_log_qthetaS = np.sum(E_log_qthetaS) + self.dirichlet_lognorm(params.kappa_m) + \
-                            np.sum((params.kappa_m - 1) * params.E_log_weights)
+        E_log_qthetaS += 0.5 * (params.wishart_vm - X.shape[1]) * params.E_logdet
+        E_log_qthetaS -= params.wishart_vm * X.shape[1] * 0.5
+        E_log_qthetaS = np.sum(E_log_qthetaS)
         E_log_qthetaS += np.sum(Cnw)
 
+        #Compute terms involving p(mix_weights) and q(mix_weights)
+        E_log_pweights = loggamma(hyperparams.kappa0 * self.n_components)
+        E_log_pweights += np.sum((hyperparams.kappa0-1) * params.E_log_weights - loggamma(hyperparams.kappa0))
+        E_log_qweights = loggamma(np.sum(params.kappa_m))
+        E_log_qweights += np.sum((params.kappa_m - 1) * params.E_log_weights - loggamma(params.kappa_m))
+        E_log_qweights = np.sum(E_log_qweights)
 
         #Add it all up....                                             
         lower_bound = E_log_pX + E_log_p_u + E_log_pthetaS - E_log_qu - E_log_qthetaS  \
-                - E_log_qz + E_log_pz
+                - E_log_qz + E_log_pz + E_log_pweights - E_log_qweights
 
         return lower_bound
 
@@ -526,6 +576,7 @@ class VariationalStudentMixture():
     def optimize_df(self, X, params, ru_sum, resp_sum):
         #First calculate the constant term of the degrees of freedom optimization
         #expression so that it does not need to be recalculated on each iteration.
+        #Notice some subtle differences from EM here.
         constant_term = params.resp * (params.E_log_gamma - params.E_gamma)
         constant_term = np.sum(constant_term, axis=0) / resp_sum + 1
         for i in range(self.n_components):
@@ -547,21 +598,22 @@ class VariationalStudentMixture():
                 params.df_[i] = 1.0
             #To avoid very large numbers in the df terms of the
             #variational lower bound, we also prevent the degrees of freedom from
-            #going very high. Numbers >> 1000 will essentially all give very similar
-            #results.
+            #going very high. Numbers >> than 100 essentially behave the same as
+            #a normal distribution, so self.max_df defaults to 100 but user CAN
+            #set a different value.
             if params.df_[i] > self.max_df:
                 params.df_[i] = self.max_df
         return params
 
 
-    # First derivative of the complete data log likelihood w/r/t df. This is used to 
+    # First derivative w/r/t df. This is used to 
     #optimize the input value (dof) via the Newton-Raphson algorithm using the scipy.optimize.
     #newton function (see self.optimize.df).
     def dof_first_deriv(self, dof, constant_term):
         clipped_dof = np.clip(dof, a_min=1e-9, a_max=None)
         return constant_term - digamma(dof * 0.5) + np.log(0.5 * clipped_dof)
 
-    #Second derivative of the complete data log likelihood w/r/t df. This is used to
+    #Second derivative w/r/t df. This is used to
     #optimize the input value (dof) via the Newton-Raphson algorithm using the
     #scipy.optimize.newton function (see self.optimize_df).
     def dof_second_deriv(self, dof, constant_term):

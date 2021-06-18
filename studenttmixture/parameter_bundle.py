@@ -42,11 +42,8 @@ class ParameterBundle():
         #The expectation of the log of the mixture weights.
         self.E_log_weights = None
 
-        #The sum of the responsibilities for each component across all datapoints. Shape is dim K.
-        self.Nk = None
-
         #Updated hyperparameters.
-        self.gamma_m = None
+        self.wishart_vm = None
         self.kappa_m = None
         self.eta_m = None
 
