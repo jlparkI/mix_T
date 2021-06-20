@@ -7,8 +7,8 @@ import numpy as np, math
 from scipy.linalg import solve_triangular, solve
 from scipy.special import gamma, logsumexp, digamma, polygamma, loggamma
 from scipy.optimize import newton
-from variational_hyperparams import VariationalMixHyperparams as Hyperparams
-from parameter_bundle import ParameterBundle
+from .variational_hyperparams import VariationalMixHyperparams as Hyperparams
+from .parameter_bundle import ParameterBundle
 from copy import copy
 
 
@@ -87,7 +87,7 @@ from copy import copy
 class VariationalStudentMixture():
 
     def __init__(self, n_components = 2, tol=1e-4, max_iter=2000, n_init=1,
-            df = 4.0, fixed_df = True, random_state=123, verbose=True,
+            df = 4.0, fixed_df = True, random_state=123, verbose=False,
             init_type = "k++", scale_inv_prior=None, loc_prior=None,
             mean_cov_prior = 1e-2, weight_conc_prior=None, wishart_dof_prior = None,
             max_df = 100):
@@ -312,7 +312,6 @@ class VariationalStudentMixture():
         old_lower_bound, convergence = -np.inf, False
         #For each iteration, we run the E step calculations then the M step
         #calculations, update the lower bound then check for convergence.
-        scales, locs = [], []
         for i in range(self.max_iter):
             params, sq_maha_dist = self.VariationalEStep(X, params)
             params = self.VariationalMStep(X, params, hyperparams)
@@ -325,8 +324,8 @@ class VariationalStudentMixture():
                 break
             old_lower_bound = copy(new_lower_bound)
             if self.verbose:
-                print(change)
-                #print("Actual lower bound: %s" % new_lower_bound)
+                #print(change)
+                print("Actual lower bound: %s" % new_lower_bound)
         return new_lower_bound, convergence, params
 
 
@@ -344,10 +343,11 @@ class VariationalStudentMixture():
     #OUTPUTS:
     #params         --  The updated ParameterBundle.
     def initialize_expectations(self, X, params, hyperparams):
-        params.eta_m = np.full(shape=self.n_components, 
-                fill_value = hyperparams.eta0)
+        params.eta_m = np.full(shape=int(self.n_components), fill_value = hyperparams.eta0,
+                               dtype=np.float64)
         
-        params.kappa_m = np.full(shape=self.n_components, fill_value = hyperparams.kappa0)
+        params.kappa_m = np.full(shape=int(self.n_components), fill_value = hyperparams.kappa0,
+                                 dtype=np.float64)
         params.E_log_weights = digamma(params.kappa_m) - digamma(np.sum(params.kappa_m))
         params.wishart_vm = X.shape[0] * np.full(shape=self.n_components,
                     fill_value = 1 / self.n_components) + hyperparams.wishart_v0
@@ -414,11 +414,12 @@ class VariationalStudentMixture():
         with np.errstate(under="ignore"):
             params.resp = weighted_loglik - logsumexp(weighted_loglik, axis=1)[:,np.newaxis]
             params.resp = np.exp(params.resp)
-        params.a_nm = 0.5 * (params.resp * X.shape[1] + params.df_[np.newaxis,:])
-        params.b_nm = 0.5 * params.resp * sq_maha_dist + 0.5 * params.df_[np.newaxis,:]
+        params.a_nm = 0.5 * (params.resp * X.shape[1] + params.df_[np.newaxis,:]) + \
+                                      10 * np.finfo(params.resp.dtype).eps
+        params.b_nm = 0.5 * params.resp * sq_maha_dist + 0.5 * params.df_[np.newaxis,:] + \
+                                      10 * np.finfo(params.resp.dtype).eps
         params.E_gamma = params.a_nm / params.b_nm
-        params.E_log_gamma = digamma(params.a_nm) - np.log(np.clip(params.b_nm, a_min=1e-12,
-                                                                                 a_max=None))
+        params.E_log_gamma = digamma(params.a_nm) - np.log(params.b_nm)
         return params, sq_maha_dist
 
     #This function is used by the E-step to calculate responsibilities during training. It is slightly
@@ -440,15 +441,15 @@ class VariationalStudentMixture():
     #Parameters that are updated:
     #params.kappa_m     --  The updated parameters of the dirichlet distribution. Shape is K
     #                       for K components.
-    #params.gamma_m     --  The updated dof parameters of the Wishart distributions
+    #params.wishart_vm  --  The updated dof parameters of the Wishart distributions
     #                       that generate the scale matrices for each component. Shape is K.
     #params.eta_m       --  The updated mean covariance prior. SHape is K.
     #params.loc_        --  The location of each component (analogous to mean of a Gaussian). Shape
     #                       is K x D for K components, D dimensions.
     #params.scale_      --  The updated scale matrices (analogous to covariance for a Gaussian).
     #                       Shape is D x D x K for K components, D dimensions.
-    #   Both the cholesky decomposition of the scale matrices and the inverse of this
-    #   cholesky decomposition are stored as well.
+    #                       Both the cholesky decomposition of the scale matrices and the inverse of this
+    #                       cholesky decomposition are stored as well.
     #params.df_         --  Degrees of freedom for each component, shape K. Updated if user
     #                       so specified.
     def VariationalMStep(self, X, params, hyperparams):
@@ -476,7 +477,6 @@ class VariationalStudentMixture():
 
             params.loc_[i,:] = params.loc_[i,:] * ru_sum[i] + hyperparams.eta0 * hyperparams.loc_prior
             params.loc_[i,:] = params.loc_[i,:] / params.eta_m[i]
-            
 
         params.scale_inv_chole_ = self.get_scale_inv_cholesky(params.scale_chole_, 
                                         params.scale_inv_chole_)
@@ -509,7 +509,6 @@ class VariationalStudentMixture():
         E_log_pX = 0.5 * np.sum(params.resp * E_log_pX)
 
         #compute terms involving p(u | other params)
-        #*******************************************
         half_df = params.df_ * 0.5
         E_log_p_u = (half_df[np.newaxis,:] - 1) * params.E_log_gamma
         E_log_p_u -= half_df[np.newaxis,:] * params.E_gamma
@@ -518,7 +517,6 @@ class VariationalStudentMixture():
         E_log_p_u = np.sum(E_log_p_u)
         
         #Compute terms involving p_mu, p_scale
-        #**************************************************
         E_log_pthetaS = 0.5 * X.shape[1] * np.log(hyperparams.eta0 / (2 * np.pi))
         E_log_pthetaS += ((hyperparams.wishart_v0 - X.shape[1]) * 0.5 * params.E_logdet)
         E_log_pthetaS -= hyperparams.eta0 * X.shape[1] / (2 * params.eta_m)
@@ -541,7 +539,6 @@ class VariationalStudentMixture():
         E_log_qz = np.sum(params.resp * np.log(np.clip(params.resp, a_min=1e-12, a_max=None)))
         
         #Compute terms involving q(u)
-        #*********************************
         E_log_qu = (params.a_nm - 1) * digamma(params.a_nm)
         E_log_qu += -loggamma(params.a_nm) - params.a_nm
         E_log_qu = np.sum(E_log_qu + np.log(params.b_nm))
@@ -569,16 +566,6 @@ class VariationalStudentMixture():
         lower_bound = E_log_pX + E_log_p_u + E_log_pthetaS - E_log_qu - E_log_qthetaS  \
                 - E_log_qz + E_log_pz + E_log_pweights - E_log_qweights
 
-        '''print("logpX,%s"%E_log_pX)
-        print("logpu,%s"%E_log_p_u)
-        print("logpthetaS,%s"%E_log_pthetaS)
-        print("logqu,%s"%E_log_qu)
-        print("logqthetaS,%s"%E_log_qthetaS)
-        print("logqz,%s"%E_log_qz)
-        print("logpz,%s"%E_log_pz)
-        print("logqweights,%s"%E_log_pweights)
-        print("logpweights,%s"%E_log_qweights)'''
-
         return lower_bound
 
 
@@ -605,7 +592,7 @@ class VariationalStudentMixture():
         #expression so that it does not need to be recalculated on each iteration.
         #Notice some subtle differences from EM here.
         constant_term = params.resp * (params.E_log_gamma - params.E_gamma)
-        constant_term = np.sum(constant_term, axis=0) / resp_sum + 1
+        constant_term = 1 + np.sum(constant_term, axis=0) / resp_sum
         for i in range(self.n_components):
             optimal_df = newton(func = self.dof_first_deriv, x0 = params.df_[i],
                                  fprime = self.dof_second_deriv,

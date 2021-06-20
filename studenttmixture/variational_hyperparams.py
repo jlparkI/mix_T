@@ -19,8 +19,8 @@ class VariationalMixHyperparams():
         self.eta0 = mean_covariance_prior
         self.wishart_v0 = wishart_v0
 
-    #Check the user specified hyperparameters and if needed update loc_prior and scale_prior,
-    #which the user is allowed to set to None, to data driven values.
+        #Check the user specified hyperparameters and if needed update loc_prior and scale_prior,
+        #which the user is allowed to set to None, to data driven values.
         #Default for the location prior is the mean of the data.
         if self.loc_prior is None:
             self.loc_prior = np.mean(X, axis=0)
@@ -46,6 +46,9 @@ class VariationalMixHyperparams():
             if self.S0.shape[0] != X.shape[1] or self.S0.shape[1] != X.shape[1]:
                 raise ValueError("The shape of scale_prior must match the "
                         "dimensionality of the training data!")
+
+        if weight_concentration_prior is None:
+            self.kappa0 = 1 / n_components
 
         if self.wishart_v0 is None:
             self.wishart_v0 = X.shape[1]
