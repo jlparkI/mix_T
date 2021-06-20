@@ -18,8 +18,10 @@ the hyperparameters may require some tuning, and the variational approach makes
 some subtle assumptions that may have impact the quality of the fit, especially for
 small datasets. Nonetheless, for some problems the ability to automatically select the
 number of clusters can make this a powerful tool.
+3) An infinite mixture of Student's t-distributions (i.e. a Dirichlet process). In practice,
+this model is fitted using some small modifications to the mean-field recipe.
 
-(1) is available in version 0.0.1, (2) will be available in version 0.0.2.
+(1) and (2) are currently available; (3) will be available in version 0.0.3.
 
 Unittests for the package are in the tests folder.
 
@@ -30,8 +32,9 @@ Unittests for the package are in the tests folder.
 ### Usage
 
 - [EMStudentMixture](https://github.com/jlparkI/mix_T/blob/main/Documentation/Finite_Mixture_Docs.md)<br>
-- [VariationalStudentMixture (coming soon)](https://github.com/jlparkI/mix_T/blob/main/Documentation/Variational_Mixture_Docs.md)<br>
-- [Student's T mixture modeling user guide](https://github.com/jlparkI/mix_T/blob/main/Documentation/Tutorial.md)<br>
+- [VariationalStudentMixture](https://github.com/jlparkI/mix_T/blob/main/Documentation/Variational_Mixture_Docs.md)<br>
+- [EM Student's T mixture modeling user guide](https://github.com/jlparkI/mix_T/blob/main/Documentation/EMTutorial.md)<br>
+- [Variational Student's T mixture modeling user guide](https://github.com/jlparkI/mix_T/blob/main/Documentation/VariationalTutorial.md)<br>
 
 
 ### Background
