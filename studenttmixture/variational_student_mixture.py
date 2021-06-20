@@ -91,6 +91,13 @@ class VariationalStudentMixture():
             init_type = "k++", scale_inv_prior=None, loc_prior=None,
             mean_cov_prior = 1e-2, weight_conc_prior=None, wishart_dof_prior = None,
             max_df = 100):
+        self.max_df = max_df
+        if self.max_df is None:
+            raise ValueError("max_df cannot be None! Set max_df to np.inf if you would like "
+                             "to have no maximum for df.")
+        if self.max_df < 1:
+            raise ValueError("max_df cannot be < 1!")
+        
         self.check_user_params(n_components, tol, 1e-3, max_iter, n_init, df, random_state,
                 init_type)
         #General model parameters specified by user.
@@ -108,11 +115,6 @@ class VariationalStudentMixture():
         self.mean_cov_prior = mean_cov_prior
         self.weight_conc_prior = weight_conc_prior
         self.wishart_dof_prior = wishart_dof_prior
-        self.max_df = max_df
-        if self.max_df is None:
-            raise ValueError("max_df cannot be None!")
-        if self.max_df < 1:
-            raise ValueError("max_df cannot be < 1!")
         #the number of restarts -- this is different from max_iter, which is the maximum 
         #number of iterations per restart.
         self.n_init = n_init
@@ -128,7 +130,9 @@ class VariationalStudentMixture():
         self.converged_ = False
         self.n_iter_ = 0
         self.df_ = None
-
+        #We save the variational lower bound in case the user wants to do model
+        #comparisons.
+        self.final_lower_bound = None
         self.resp = None
 
     #Function to check the user specified model parameters for validity.
@@ -145,10 +149,15 @@ class VariationalStudentMixture():
         except:
             raise ValueError("n_components, tol, max_iter, n_init, reg_covar and random state should be numeric; "
                     "init_type should be a string.")
+        if df > self.max_df:
+            raise ValueError("Very large values for dof will give results essentially identical to a Gaussian mixture."
+                    "DF = 4 is suggested as a good default. If fixed_df is False, the df will be "
+                             "optimized. Currently you have chosen a starting value for df that is "
+                             "greater than the max_df value you specified.")
         if df > 1000:
             raise ValueError("Very large values for dof will give results essentially identical to a Gaussian mixture."
                     "DF = 4 is suggested as a good default. If fixed_df is False, the df will be "
-                             "optimized.")
+                             "optimized. Currently you have chosen a very large value for df > 1000.")
         if df < 1:
             raise ValueError("Inappropriate starting value for df!")
         if max_iter < 1:
@@ -266,6 +275,7 @@ class VariationalStudentMixture():
                 self.transfer_fit_params(X, param_bundle, hyperparams)
                 del param_bundle
                 self.converged_ = True
+                self.final_lower_bound = lower_bound
         if self.converged_ == False:
             print("The model did not converge on any of the restarts! Try increasing max_iter or "
                         "tol or check data for possible issues.")
@@ -307,7 +317,7 @@ class VariationalStudentMixture():
             params, sq_maha_dist = self.VariationalEStep(X, params)
             params = self.VariationalMStep(X, params, hyperparams)
             new_lower_bound = self.update_lower_bound(X, params, hyperparams,
-                                                          sq_maha_dist)
+                                                          sq_maha_dist, old_lower_bound)
 
             change = new_lower_bound - old_lower_bound
             if abs(change) < self.tol:
@@ -315,7 +325,8 @@ class VariationalStudentMixture():
                 break
             old_lower_bound = copy(new_lower_bound)
             if self.verbose:
-                print("Actual lower bound: %s" % new_lower_bound)
+                print(change)
+                #print("Actual lower bound: %s" % new_lower_bound)
         return new_lower_bound, convergence, params
 
 
@@ -415,7 +426,8 @@ class VariationalStudentMixture():
     #(which is identical to EM) -- remember, despite the superficial similarities, the 
     #variational model is derived in a very different way, and has some important differences!
     def variational_loglik(self, X, params, sq_maha_dist):
-        loglik = 0.5 * params.E_logdet[np.newaxis,:] - 0.5 * X.shape[1] * (np.log(2 * np.pi) - params.E_log_gamma)
+        loglik = 0.5 * params.E_logdet[np.newaxis,:] + 0.5 * X.shape[1] * \
+                 (-np.log(2 * np.pi) + params.E_log_gamma)
         loglik += params.E_log_weights
         loglik -= 0.5 * params.E_gamma * sq_maha_dist
         return loglik
@@ -443,7 +455,6 @@ class VariationalStudentMixture():
         ru = params.E_gamma * params.resp
         ru_sum = np.sum(ru, axis=0) + 10 * np.finfo(params.resp.dtype).eps
         resp_sum = np.sum(params.resp, axis=0) + 10 * np.finfo(params.resp.dtype).eps
-
 
         params.kappa_m = resp_sum + hyperparams.kappa0
         params.wishart_vm = resp_sum + hyperparams.wishart_v0
@@ -491,13 +502,14 @@ class VariationalStudentMixture():
     #in order to aid in troubleshooting (it closely parallels the formula for the variational
     #lower bound derived on paper). Later it may be helpful to simplify this as far as that
     #is possible.
-    def update_lower_bound(self, X, params, hyperparams, sq_maha_dist):
+    def update_lower_bound(self, X, params, hyperparams, sq_maha_dist, old_lower_bound):
         #compute terms involving p(X | params)
         E_log_pX = -X.shape[1] * np.log(2 * np.pi) + X.shape[1] * params.E_log_gamma
         E_log_pX += params.E_logdet - params.E_gamma * sq_maha_dist
         E_log_pX = 0.5 * np.sum(params.resp * E_log_pX)
 
         #compute terms involving p(u | other params)
+        #*******************************************
         half_df = params.df_ * 0.5
         E_log_p_u = (half_df[np.newaxis,:] - 1) * params.E_log_gamma
         E_log_p_u -= half_df[np.newaxis,:] * params.E_gamma
@@ -506,13 +518,19 @@ class VariationalStudentMixture():
         E_log_p_u = np.sum(E_log_p_u)
         
         #Compute terms involving p_mu, p_scale
-        E_log_pthetaS = X.shape[1] * np.log(hyperparams.eta0 / (2 * np.pi)) - hyperparams.eta0 * sq_maha_dist
-        E_log_pthetaS += ((hyperparams.wishart_v0 - X.shape[1] + 1) * 0.5 * params.E_logdet)[np.newaxis,:]
+        #**************************************************
+        E_log_pthetaS = 0.5 * X.shape[1] * np.log(hyperparams.eta0 / (2 * np.pi))
+        E_log_pthetaS += ((hyperparams.wishart_v0 - X.shape[1]) * 0.5 * params.E_logdet)
+        E_log_pthetaS -= hyperparams.eta0 * X.shape[1] / (2 * params.eta_m)
         E_log_pthetaS = np.sum(E_log_pthetaS)
         for i in range(self.n_components):
+            mean_offset = np.dot(params.loc_[i,:], params.scale_inv_chole_[:,:,i])
+            mean_offset = mean_offset - np.dot(hyperparams.loc_prior, params.scale_inv_chole_[:,:,i])
+            mean_offset = 0.5 * hyperparams.eta0 * params.wishart_vm[i] * np.sum(mean_offset**2)
             trace_term = np.trace(np.matmul(hyperparams.S0, np.matmul(params.scale_inv_chole_[:,:,i],
                                                                       params.scale_inv_chole_[:,:,i].T)))
             E_log_pthetaS -= 0.5 * params.wishart_vm[i] * trace_term
+            E_log_pthetaS -= mean_offset
         E_log_pthetaS = 0.5 * E_log_pthetaS
 
 
@@ -523,29 +541,43 @@ class VariationalStudentMixture():
         E_log_qz = np.sum(params.resp * np.log(np.clip(params.resp, a_min=1e-12, a_max=None)))
         
         #Compute terms involving q(u)
-        E_log_qu = ((params.a_nm - 1) * digamma(params.a_nm))
-        E_log_qu -= loggamma(params.a_nm)
-        E_log_qu = np.sum(E_log_qu - params.E_log_gamma)
+        #*********************************
+        E_log_qu = (params.a_nm - 1) * digamma(params.a_nm)
+        E_log_qu += -loggamma(params.a_nm) - params.a_nm
+        E_log_qu = np.sum(E_log_qu + np.log(params.b_nm))
 
         #Compute terms involving q_thetaS
-        E_log_qthetaS = X.shape[1] * 0.5 * np.log(np.clip(params.wishart_vm / (2 * np.pi), a_min=1e-12, a_max=None))
+        E_log_qthetaS = X.shape[1] * 0.5 * np.log(np.clip(params.wishart_vm /
+                                                          (2 * np.pi), a_min=1e-12, a_max=None))
         Cnw = [self.wishart_norm(params.scale_inv_chole_[:,:,i], params.wishart_vm[i],
                     return_log = True) for i in range(self.n_components)]
         E_log_qthetaS += 0.5 * (params.wishart_vm - X.shape[1]) * params.E_logdet
-        E_log_qthetaS -= params.wishart_vm * X.shape[1] * 0.5
+        E_log_qthetaS += (params.wishart_vm + 1) * X.shape[1] * 0.5
         E_log_qthetaS = np.sum(E_log_qthetaS)
         E_log_qthetaS += np.sum(Cnw)
 
         #Compute terms involving p(mix_weights) and q(mix_weights)
         E_log_pweights = loggamma(hyperparams.kappa0 * self.n_components)
-        E_log_pweights += np.sum((hyperparams.kappa0-1) * params.E_log_weights - loggamma(hyperparams.kappa0))
+        E_log_pweights += np.sum((hyperparams.kappa0 - 1) * params.E_log_weights - \
+                                 loggamma(hyperparams.kappa0))
         E_log_qweights = loggamma(np.sum(params.kappa_m))
-        E_log_qweights += np.sum((params.kappa_m - 1) * params.E_log_weights - loggamma(params.kappa_m))
+        E_log_qweights += np.sum((params.kappa_m - 1) * params.E_log_weights - \
+                                 loggamma(params.kappa_m))
         E_log_qweights = np.sum(E_log_qweights)
 
         #Add it all up....                                             
         lower_bound = E_log_pX + E_log_p_u + E_log_pthetaS - E_log_qu - E_log_qthetaS  \
                 - E_log_qz + E_log_pz + E_log_pweights - E_log_qweights
+
+        '''print("logpX,%s"%E_log_pX)
+        print("logpu,%s"%E_log_p_u)
+        print("logpthetaS,%s"%E_log_pthetaS)
+        print("logqu,%s"%E_log_qu)
+        print("logqthetaS,%s"%E_log_qthetaS)
+        print("logqz,%s"%E_log_qz)
+        print("logpz,%s"%E_log_pz)
+        print("logqweights,%s"%E_log_pweights)
+        print("logpweights,%s"%E_log_qweights)'''
 
         return lower_bound
 
@@ -564,11 +596,6 @@ class VariationalStudentMixture():
         if return_log:
             return logdet_term - inverse_term
         return np.exp(logdet_term - inverse_term)
-
-    #Gets the log normalization term for the Dirichlet distribution (only required for calculating
-    #the variational lower bound). The normalization term is across all components obviously.
-    def dirichlet_lognorm(self, kappa):
-        return loggamma(np.sum(kappa))  - np.sum(loggamma(kappa))
 
 
 
@@ -771,25 +798,6 @@ class VariationalStudentMixture():
     @degrees_of_freedom.setter
     def degrees_of_freedom(self, user_assigned_df):
         self.df_ = user_assigned_df
-
-    #Returns the Akaike information criterion (AIC) for the input dataset.
-    #Useful in selecting the number of components.
-    def aic(self, X):
-        self.check_model()
-        x = self.check_inputs(X)
-        n_params = self.get_num_parameters()
-        score = self.score(x, perform_model_checks = False)
-        return 2 * n_params - 2 * score * X.shape[0]
-
-    #Returns the Bayes information criterion (BIC) for the input dataset.
-    #Useful in selecting the number of components, more heavily penalizes
-    #n_components than AIC.
-    def bic(self, X):
-        self.check_model()
-        x = self.check_inputs(X)
-        score = self.score(x, perform_model_checks = False)
-        n_params = self.get_num_parameters()
-        return n_params * np.log(x.shape[0]) - 2 * score * x.shape[0]
 
 
     #Returns log p(X | theta) + log mix_weights. This is called by other class
