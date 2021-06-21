@@ -14,7 +14,7 @@ t distributions fit via the variational mean-field approximation. Depending on t
 hyperparameters you select, the fitting process will automatically "choose" an 
 appropriate number of clusters, so the number of components in this case acts
 as an upper bound.
-3) An infinite mixture of Student's t-distributions (i.e. a Dirichlet process). In practice,
+3) Modeling / clustering an infinite mixture of Student's t-distributions (i.e. a Dirichlet process). In practice,
 this model is fitted using some small modifications to the mean-field recipe and has
 some of the same advantages and limitations.
 
@@ -36,3 +36,7 @@ Unittests for the package are in the tests folder.
 ### Background
 
 - [Deriving the mean-field formula](https://github.com/jlparkI/mix_T/blob/main/Documentation/variational_mean_field.pdf)<br>
+
+### Upcoming in future versions
+
+- [Planned for version 0.0.3](https://github.com/jlparkI/mix_T/blob/main/Documentation/planned_mods.md)
