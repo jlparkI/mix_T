@@ -19,7 +19,9 @@ from copy import copy
 
 #This class is used to fit a finite student's t mixture using variational mean-field
 #(for details, see the docs). This is a Bayesian approach unlike EM and therefore
-#can be used to approximate the posterior. This shares many elements
+#can be used to approximate the posterior (a crude approximation though,
+#so in general variational techniques are better for prediction than for
+#inference). This shares many elements
 #in common with EM, in particular the "stepwise" approach where some parameters
 #are held fixed while others are updated, but the update calculations are in some
 #respects different, also the lower bound calculations are quite different.
@@ -86,7 +88,7 @@ from copy import copy
 
 class VariationalStudentMixture():
 
-    def __init__(self, n_components = 2, tol=1e-4, max_iter=2000, n_init=1,
+    def __init__(self, n_components = 2, tol=1e-5, max_iter=2000, n_init=1,
             df = 4.0, fixed_df = True, random_state=123, verbose=False,
             init_type = "k++", scale_inv_prior=None, loc_prior=None,
             mean_cov_prior = 1e-2, weight_conc_prior=None, wishart_dof_prior = None,
@@ -241,14 +243,14 @@ class VariationalStudentMixture():
     #X              --  The raw data for fitting. This must be either a 1d array, in which case
     #                   self.check_fitting_data will reshape it to a 2d 1-column array, or
     #                   a 2d array where each column is a feature and each row a datapoint.
-    #purge_unused_clusters  --  A boolean value indicating whether at the end of fitting the
-    #               algorithm should remove any clusters for which the mixture weight is
-    #               < unused_cluster_threshold. Set to True by default. Generally if a cluster
-    #               is "empty" at the end of fitting, it should be removed after fitting to
-    #               save memory.
-    #unusued_cluster_threshold  --  The threshold below which a mixture weight is considered
-    #               to indicate the cluster is empty. Only used if purge_unused_clusters is True.
-    def fit(self, X, purge_unused_clusters = True, unused_cluster_threshold = 1e-8):
+    #use_score      --  A boolean. If True, instead of using the variational lower bound
+    #                   to select the best model from n_init, we use the model score.
+    #                   If False, we keep the model with the best variational lower bound.
+    #                   Using score instead prioritizes models with larger likelihood.
+    #                   Generally both approaches should give the same result, but 
+    #                   in some situations there may be interesting differences.
+    #                   Defaults to True.
+    def fit(self, X, use_score = False):
         x = self.check_fitting_data(X)
         best_lower_bound = -np.inf
         #Check the user specified hyperparams and for any that are None (indicating user
@@ -263,19 +265,30 @@ class VariationalStudentMixture():
         for i in range(self.n_init):
             #Increment random state so that each random initialization is different from the
             #rest but so that the overall chain is reproducible.
-            lower_bound, convergence, param_bundle = self.fitting_restart(x, self.random_state + i,
-                                        hyperparams, purge_unused_clusters, unused_cluster_threshold)
+            lower_bound, convergence, param_bundle, score = self.fitting_restart(x, 
+                                self.random_state + i, hyperparams)
             if self.verbose:
                 print("Restart %s now complete"%i)
             if convergence == False:
                 print("Restart %s did not converge!"%(i+1))
+                continue
             #If this is the best lower bound we've seen so far, update our saved
             #parameters using the parameter bundle and then discard it.
-            elif lower_bound > best_lower_bound:
+            if lower_bound > best_lower_bound and use_score == False:
                 self.transfer_fit_params(X, param_bundle, hyperparams)
                 del param_bundle
                 self.converged_ = True
+                best_lower_bound = lower_bound
                 self.final_lower_bound = lower_bound
+            #If the user wants to use the score instead, use this to choose the model
+            #instead of the lower bound.
+            elif use_score == True and score > best_lower_bound:
+                self.transfer_fit_params(X, param_bundle, hyperparams)
+                del param_bundle
+                self.converged_ = True
+                best_lower_bound = score
+                self.final_lower_bound = lower_bound
+
         if self.converged_ == False:
             print("The model did not converge on any of the restarts! Try increasing max_iter or "
                         "tol or check data for possible issues.")
@@ -287,14 +300,7 @@ class VariationalStudentMixture():
     #X              --  The raw data. Must be a 2d array where each column is a feature and
     #                   each row is a datapoint. The caller (self.fit) ensures this is true.
     #random_state   --  The seed for the random number generator.
-    #hyperparams    --  A copy of the hyperparameters object stored by the class.
-    #purge_unused_clusters  --  A boolean value indicating whether at the end of fitting the
-    #               algorithm should remove any clusters for which the mixture weight is
-    #               < unused_cluster_threshold. Set to True by default. Generally if a cluster
-    #               is "empty" at the end of fitting, it should be removed after fitting to
-    #               save memory.
-    #unusued_cluster_threshold  --  The threshold below which a mixture weight is considered
-    #               to indicate the cluster is empty. Only used if purge_unused_clusters is True.
+    #hyperparams    --  A copy of the hyperparameters object passed by the class.
     #
     #RETURNED PARAMETERS        
     #current_bound  --  The lower bound for the current fitting iteration. The caller (self.fit)
@@ -302,8 +308,7 @@ class VariationalStudentMixture():
     #convergence    --  A boolean indicating convergence or lack thereof.
     #param_bundle   --  Object containing all fit parameters and all values needed to calculate
     #                   the lower bound.
-    def fitting_restart(self, X, random_state, hyperparams,
-                        purge_unused_clusters, unused_cluster_threshold):
+    def fitting_restart(self, X, random_state, hyperparams):
         params = ParameterBundle(X, self.n_components, self.start_df, random_state)
         
         #The param_bundle has several expectations that need to be initialized before
@@ -313,11 +318,10 @@ class VariationalStudentMixture():
         #For each iteration, we run the E step calculations then the M step
         #calculations, update the lower bound then check for convergence.
         for i in range(self.max_iter):
-            params, sq_maha_dist = self.VariationalEStep(X, params)
+            params, sq_maha_dist, score = self.VariationalEStep(X, params)
             params = self.VariationalMStep(X, params, hyperparams)
             new_lower_bound = self.update_lower_bound(X, params, hyperparams,
-                                                          sq_maha_dist, old_lower_bound)
-
+                                                          sq_maha_dist)
             change = new_lower_bound - old_lower_bound
             if abs(change) < self.tol:
                 convergence = True
@@ -326,7 +330,7 @@ class VariationalStudentMixture():
             if self.verbose:
                 #print(change)
                 print("Actual lower bound: %s" % new_lower_bound)
-        return new_lower_bound, convergence, params
+        return new_lower_bound, convergence, params, score
 
 
 
@@ -368,12 +372,14 @@ class VariationalStudentMixture():
         params.E_gamma = params.a_nm / params.b_nm
         params.E_log_gamma = digamma(params.a_nm) - np.log(np.clip(params.b_nm, a_min=1e-12,
                                                                                  a_max=None))
-        
         return params
+
 
     #At the end of fitting, the parameters need to be transferred from the ParameterBundle
     #class to the VariationalStudentMixture class so the user can access them easily and
-    #so they can be used to make predictions. This function performs the transfer.
+    #so they can be used to make predictions. In addition, certain parameters that are
+    #not calculated during fitting (the actual mixture weights for example) must
+    #be calculated.
     #INPUTS:
     #params         --  Object of class ParameterBundle holding all of the fit parameters.
     def transfer_fit_params(self, X, params, hyperparams):
@@ -390,6 +396,8 @@ class VariationalStudentMixture():
         self.mix_weights = params.kappa_m / (self.n_components * hyperparams.kappa0 + 
                 X.shape[0])
         self.resp = params.resp
+
+
 
     #The equivalent of the E step in the EM algorithm but for the variational algorithm.
     #Despite some superficial resemblances and shared calculations, this algorithm makes 
@@ -411,8 +419,9 @@ class VariationalStudentMixture():
         sq_maha_dist = sq_maha_dist * params.wishart_vm[np.newaxis,:] + \
                        X.shape[1] / params.eta_m[np.newaxis,:]
         weighted_loglik = self.variational_loglik(X, params, sq_maha_dist)
+        logprobnorm = logsumexp(weighted_loglik, axis=1)
         with np.errstate(under="ignore"):
-            params.resp = weighted_loglik - logsumexp(weighted_loglik, axis=1)[:,np.newaxis]
+            params.resp = weighted_loglik - logprobnorm[:,np.newaxis]
             params.resp = np.exp(params.resp)
         params.a_nm = 0.5 * (params.resp * X.shape[1] + params.df_[np.newaxis,:]) + \
                                       10 * np.finfo(params.resp.dtype).eps
@@ -420,7 +429,10 @@ class VariationalStudentMixture():
                                       10 * np.finfo(params.resp.dtype).eps
         params.E_gamma = params.a_nm / params.b_nm
         params.E_log_gamma = digamma(params.a_nm) - np.log(params.b_nm)
-        return params, sq_maha_dist
+        #Return the model score (like the variational lower bound, provides another
+        #way to compare models)
+        score = np.mean(logprobnorm)
+        return params, sq_maha_dist, score
 
     #This function is used by the E-step to calculate responsibilities during training. It is slightly
     #different from the more straightforward likelihood calculation employed for a fitted model
@@ -436,7 +448,7 @@ class VariationalStudentMixture():
 
     #The equivalent of the M step in the EM algorithm but for the variational algorithm.
     #Despite some superficial resemblances and shared calculations, this algorithm makes 
-    #very different assumptions.
+    #different assumptions.
     #
     #Parameters that are updated:
     #params.kappa_m     --  The updated parameters of the dirichlet distribution. Shape is K
@@ -501,11 +513,11 @@ class VariationalStudentMixture():
     #TODO: Currently this is written in an unnecessarily verbose and cumbersome format
     #in order to aid in troubleshooting (it closely parallels the formula for the variational
     #lower bound derived on paper). Later it may be helpful to simplify this as far as that
-    #is possible.
-    def update_lower_bound(self, X, params, hyperparams, sq_maha_dist, old_lower_bound):
+    #is possible. Constant terms can be removed for starters.
+    def update_lower_bound(self, X, params, hyperparams, sq_maha_dist):
         #compute terms involving p(X | params)
         E_log_pX = -X.shape[1] * np.log(2 * np.pi) + X.shape[1] * params.E_log_gamma
-        E_log_pX += params.E_logdet - params.E_gamma * sq_maha_dist
+        E_log_pX += params.E_logdet[np.newaxis,:] - params.E_gamma * sq_maha_dist
         E_log_pX = 0.5 * np.sum(params.resp * E_log_pX)
 
         #compute terms involving p(u | other params)
@@ -567,7 +579,6 @@ class VariationalStudentMixture():
                 - E_log_qz + E_log_pz + E_log_pweights - E_log_qweights
 
         return lower_bound
-
 
 
     #Gets the normalization term for the Wishart distribution (only required for 
@@ -703,6 +714,8 @@ class VariationalStudentMixture():
     that the user is expected to call (i.e. the ones described in the documentation)
     check that the model has been fitted using self.check_model() before performing any
     calculations; if the model has not been fitted they raise a value error.'''
+    
+
 
 
     #Returns a categorical component assignment for each sample in the input. It calls
@@ -720,6 +733,45 @@ class VariationalStudentMixture():
         probs = self.get_component_probabilities(x)
         return probs
 
+    #At the end of fitting, with a variational mixture, the user may sometimes find that
+    #some of the components were unnecessary and can be killed off. This function
+    #enables the user to remove empty clusters, which may be cheaper than re-fitting
+    #the model with a smaller number of clusters.
+    #INPUTS
+    #empty_cluster_threshold    --  The number of datapoints below which a cluster
+    #                               is considered empty.
+    #X                          --  The training dataset. Note that this SHOULD be
+    #                               the training dataset -- using a different dataset
+    #                               to decide which clusters are empty could give you
+    #                               very strange results!
+    def purge_empty_clusters(self, X, empty_cluster_threshold = 1):
+        cluster_probs = self.predict_proba(X)
+        cluster_assignments = np.zeros_like(cluster_probs)
+        cluster_assignments[np.arange(cluster_probs.shape[0]),
+                np.argmax(cluster_probs, axis=1)] = 1
+        cluster_assignments = np.sum(cluster_assignments, axis=0)
+        scale, location, df, mix_weights, scale_chole = [], [], [], [], []
+        for i in range(self.n_components):
+            if cluster_assignments[i] >= empty_cluster_threshold:
+                scale.append(self.scale_[:,:,i])
+                location.append(self.location_[i,:])
+                df.append(self.df_[i])
+                mix_weights.append(self.mix_weights_[i])
+                scale_chole.append(self.scale_cholesky_[:,:,i])
+        if len(mix_weights) == 0:
+            raise ValueError("You cannot purge all clusters! Try setting a lower value "
+                    "for empty_cluster_threshold.")
+        self.n_components = len(mix_weights)
+        self.scale_ = np.stack(scale, axis=-1)
+        self.location_ = np.stack(location, axis=0)
+        self.df_ = np.asarray(df)
+        self.mix_weights_ = np.asarray(mix_weights)
+        self.mix_weights_ = self.mix_weights_ / np.sum(self.mix_weights_)
+        self.scale_cholesky_ = np.stack(scale_chole, axis=-1)
+        self.scale_inv_cholesky_ = np.empty_like(self.scale_cholesky_)
+        self.scale_inv_cholesky_ = self.get_scale_inv_cholesky(self.scale_cholesky_,
+                            self.scale_inv_cholesky_)
+        
 
     #Returns the average log likelihood (i.e. averaged over all datapoints). Calls
     #self.score_samples to do the actual calculation. Useful for AIC, BIC. It has
