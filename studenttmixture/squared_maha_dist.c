@@ -3,13 +3,15 @@
 #include <math.h>
 
 
+static PyObject *squaredMahaDistance(PyObject *self, PyObject *args);
+
+
 //Boilerplate required for setuptools.
 static PyMethodDef sqMahaMethods[] = {
-{ 
-    "squaredMahaDistance", 
-    sqMahaDistance,
+    {"squaredMahaDistance", 
+    squaredMahaDistance,
     METH_VARARGS,
-    "Calculate the squared mahalanobis distance using input numpy arrays",
+    "Calculate the squared mahalanobis distance using input numpy arrays"},
     {NULL, NULL, 0, NULL}
 };
 
@@ -32,46 +34,76 @@ PyMODINIT_FUNC PyInit_squaredMahaDistance(void)
     return module;
 };
 
-//The actual function -- will write this soon...
 static PyObject *squaredMahaDistance(PyObject *self, PyObject *args){
-    //Parse arguments, make sure the inputs are numpy arrays with expected
-    //shapes and data types,
-    //if not, kick this back to the Python interpreter with a description
-    //of the problem.
-    PyArrayObject *x, *location, *lower_chole_decomp;
-    if (!PyArg_ParseTuple(args, "O!O!O!", &PyArray_Type, &x, &location, &lower_chole_decomp){
-        PyErr_SetString("squaredMahaDistance (C extension) expects three arguments: "
+    PyArrayObject *x, *location, *lower_chole_decomp, *maha_distance;
+    if (!PyArg_ParseTuple(args, "O!O!O!O!", &PyArray_Type, &x, &PyArray_Type, 
+                &location, &PyArray_Type, &lower_chole_decomp,
+                &PyArray_Type, &maha_distance)){
+        PyErr_SetString(PyExc_ValueError,
+                "squaredMahaDistance (C extension) expects four arguments: "
                 "a numpy array of the data, a numpy array of the component locations, "
-                "and a numpy array of the inverse of the cholesky "
-                "decomposition of the scale matrix. This function has received incorrect "
+                "a numpy array of the inverse of the cholesky "
+                "decomposition of the scale matrix, and a numpy array in which "
+                "the squared mahalanobis distance will be stored. "
+                "This function has received incorrect "
                 "arguments.");
         return NULL;
     }
     if (x->nd != 2 || x->descr->type_num != PyArray_DOUBLE){
-        PyErr_SetString("The data array input to squaredMahaDistance must be 2d and "
+        PyErr_SetString(PyExc_ValueError,
+                "The data array input to squaredMahaDistance must be 2d and "
                 "of type double.");
         return NULL;
     }
     if (location->nd != 2 || location->descr->type_num != PyArray_DOUBLE){
-        PyErr_SetString("The location array input to squaredMahaDistance must be 2d and "
+        PyErr_SetString(PyExc_ValueError,
+                "The location array input to squaredMahaDistance must be 2d and "
                 "of type double.");
-        return NULL;
-        
+        return NULL; 
     }
-    if (lower_chole_decomp->nd != 3 || lower_chole_decomp->descr->type_num != PyArray_DOUBLE){
-        PyErr_SetString("The inverse cholesky decomposition argument to squaredMahaDistance "
+    if (lower_chole_decomp->nd != 3 || 
+            lower_chole_decomp->descr->type_num != PyArray_DOUBLE){
+        PyErr_SetString(PyExc_ValueError,
+                "The inverse cholesky decomposition argument to squaredMahaDistance "
                 "must be 3d and of type double.");
         return NULL;
     }
-    //If we are here, the inputs have valid shapes and types. We now construct an array
-    //to store the output. This array will be returned so we will not decref.
-    int dimensions[2];
-    dimensions[0] = x->dimensions[0];
-    dimensions[1] = location->dimensions[0];
-    PyObject *mahaDistance;
-    int i, j, k;
+    if (maha_distance->nd != 2 || maha_distance->descr->type_num != PyArray_DOUBLE){
+        PyErr_SetString(PyExc_ValueError,
+                "The maha_distance argument to squaredMahaDistance must be 2d and "
+                "of type double.");
+        return NULL; 
+    }
+    double *x_adjusted = (double*)malloc(x->dimensions[1] * sizeof(double));
+    if (x_adjusted == NULL){
+        PyErr_SetString(PyExc_ValueError, "C extension cannot allocate memory!");
+        return NULL;
+    }
+    int i, j, k, m;
+    double dotProductTerm;
+    double *currentMahaElement;
 
-    mahaDistance = (PyArrayObject *)PyArray_FromDims(2, dimensions, PyArray_DOUBLE);
 
-    
+    for (k=0; k < location->dimensions[0]; k++){
+        for (i=0; i < x->dimensions[0]; i++){
+            currentMahaElement = (double *)PyArray_GETPTR2(maha_distance, i, k);
+            *currentMahaElement = 0;
+            for (j=0; j < x->dimensions[1]; j++){
+                x_adjusted[j] = *((double *)PyArray_GETPTR2(x, i, j)) - 
+                        *((double *)PyArray_GETPTR2(location, k, j));
+            }
+            for (j=0; j < x->dimensions[1]; j++){
+                dotProductTerm = 0;
+                for (m=0; m < j+1; m++){
+                    dotProductTerm += *((double *)PyArray_GETPTR3(lower_chole_decomp,
+                                    m, j, k)) * x_adjusted[m];
+                }
+                *currentMahaElement += dotProductTerm * dotProductTerm;
+            }
+        }
+    }
+    free(x_adjusted);
+
+    Py_INCREF(Py_None);
+    return Py_None;
 }

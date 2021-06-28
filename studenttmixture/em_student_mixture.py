@@ -11,7 +11,6 @@ from scipy.optimize import newton
 
 
 
-
 #################################################################################
 
 #This class is used to fit a finite student's t mixture using the EM algorithm (see

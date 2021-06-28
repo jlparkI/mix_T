@@ -1,0 +1,54 @@
+import unittest, numpy as np, scipy, sys
+from scipy import stats, spatial
+sys.path.append("..")
+import studenttmixture
+from studenttmixture.em_student_mixture import EMStudentMixture
+from squaredMahaDistance import squaredMahaDistance
+
+class TestSqMahaDistExtension(unittest.TestCase):
+    
+    #Test the squared mahalanobis distance calculation by generating a set
+    #of random datapoints and measuring squared mahalanobis distance to a
+    #prespecified location & scale matrix distribution, then compare the
+    #result with scipy's mahalanobis function.
+    def test_sq_maha_distance(self):
+        print("*********************")
+        np.random.seed(123)
+        X = np.random.uniform(low=-10,high=10,size=(250,3))
+        FiniteMix = EMStudentMixture()
+        #Arbitrary scale matrices...
+        covmat1 = np.asarray([[0.025, 0.0075, 0.00175],
+                            [0.0075, 0.0070, 0.00135],
+                            [0.00175, 0.00135, 0.00043]])
+        covmat2 = np.asarray([[1.2, 0.1, 0.42],
+                            [0.1, 0.5, 0.0035],
+                            [0.42, 0.0035, 0.35]])
+        chole_covmat1 = np.linalg.cholesky(covmat1)
+        chole_covmat2 = np.linalg.cholesky(covmat2)
+        chole_covmat = np.stack([chole_covmat1, chole_covmat2], axis=-1)
+        chole_inv_cov = np.empty((3,3,2))
+        chole_inv_cov = FiniteMix.get_scale_inv_cholesky(chole_covmat, chole_inv_cov)
+        #Arbitrary locations...
+        loc = np.asarray([[0.156,-0.324,0.456],[-2.5,3.6,1.2]])
+        scale_inv1 = np.linalg.inv(covmat1)
+        scale_inv2 = np.linalg.inv(covmat2)
+        
+        extension_dist = np.zeros((X.shape[0], 2))
+        true_dist = np.empty((X.shape[0], 2))
+        squaredMahaDistance(X, loc, chole_inv_cov, extension_dist)
+        for i in range(X.shape[0]):
+            true_dist[i,0] = scipy.spatial.distance.mahalanobis(X[i,:], loc[0,:],
+                            scale_inv1)**2
+            true_dist[i,1] = scipy.spatial.distance.mahalanobis(X[i,:], loc[1,:],
+                            scale_inv2)**2
+        outcome = np.allclose(extension_dist, true_dist)
+        print("Does scipy's mahalanobis match "
+                "the C extension-calculated distance? %s"%outcome)
+        self.assertTrue(outcome)
+        print('\n')
+
+
+
+if __name__ == "__main__":
+    unittest.main()
+
