@@ -27,10 +27,7 @@ Unittests for the package are in the tests folder.
 
 Note that starting in version 0.0.2.1, this package contains C extensions and is therefore
 distributed as a source distribution which is automatically compiled on install. 
-This is a little less convenient but provides a large speed increase so that 
-*studenttmixture* is typically significantly faster 
-(see docs for a comparison) than scikitlearn's *GaussianMixture* when fixed_df is used 
-(optimizing the degrees of freedom is slow).
+This is a little less convenient but provides a large speed increase.
 
 It is unusual but problems with source distribution pip packages that contain C extensions are occasionally
 observed on Windows, e.g. an error similar to this:
