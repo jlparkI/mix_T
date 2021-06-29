@@ -6,7 +6,7 @@ with open("README.md", "r") as fhandle:
 
 sqMahaExtension = Extension("squaredMahaDistance", sources=[os.path.join("studenttmixture",
                             "squared_maha_dist.c")], include_dirs=
-                            [numpy.get_include()])
+                            [numpy.get_include(), "tests"])
 
 setup(
         name="studenttmixture",

@@ -7,7 +7,7 @@ import numpy as np, math
 from scipy.linalg import solve_triangular
 from scipy.special import gammaln, logsumexp, digamma, polygamma
 from scipy.optimize import newton
-
+from squaredMahaDistance import squaredMahaDistance
 
 
 
@@ -239,11 +239,12 @@ class EMStudentMixture():
         loc_, scale_, mix_weights_, scale_cholesky_, scale_inv_cholesky_ = \
                 self.initialize_params(X, random_state, self.init_type)
         lower_bound, convergence = -np.inf, False
+        sq_maha_dist = np.empty((X.shape[0], self.n_components))
         #For each iteration, we run the E step calculations then the M step
         #calculations, update the lower bound then check for convergence.
         for i in range(self.max_iter):
             resp, E_gamma, current_bound = self.Estep(X, df_, loc_, scale_inv_cholesky_, 
-                                scale_cholesky_, mix_weights_)
+                                scale_cholesky_, mix_weights_, sq_maha_dist)
             
             mix_weights_, loc_, scale_, scale_cholesky_, scale_inv_cholesky_,\
                             df_ = self.Mstep(X, resp, E_gamma, scale_, 
@@ -287,8 +288,11 @@ class EMStudentMixture():
     #                   a gamma distribution in the formulation of the student's t-distribution
     #                   as a scale mixture of normals. 
     #lower_bound    --  The lower bound (to determine whether fit has converged).
-    def Estep(self, X, df_, loc_, scale_inv_cholesky_, scale_cholesky_, mix_weights_):
-        sq_maha_dist = self.vectorized_sq_maha_distance(X, loc_, scale_inv_cholesky_)
+    def Estep(self, X, df_, loc_, scale_inv_cholesky_, scale_cholesky_, mix_weights_,
+            sq_maha_dist):
+        #We use the C extension to calculate squared mahalanobis distance and pass
+        #it the array in which we would like to store the output.
+        squaredMahaDistance(X, loc_, scale_inv_cholesky_, sq_maha_dist)
         loglik = self.get_loglikelihood(X, sq_maha_dist, df_, 
                 scale_cholesky_, mix_weights_)
 
@@ -409,10 +413,10 @@ class EMStudentMixture():
 
 
     #Calculates the squared mahalanobis distance for X to all components. Returns an
-    #array of dim N x K for N datapoints, K mixture components. This is a non-vectorized
-    #version of the vectorized function below (preseved primarily for troubleshooting,
-    #not actively used at present). It is more readable but slower than the vectorized
-    #version.
+    #array of dim N x K for N datapoints, K mixture components.
+    #This is at least 5x slower than the C extension but being pure Python is
+    #more cross-platform and more readable, so it's preserved for troubleshooting 
+    #purposes.
     def sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
         sq_maha_dist = np.empty((X.shape[0], scale_inv_cholesky_.shape[2]))
         for i in range(sq_maha_dist.shape[1]):
@@ -421,16 +425,6 @@ class EMStudentMixture():
             sq_maha_dist[:,i] = np.sum(y**2, axis=1)
         return sq_maha_dist
 
-
-    #Calculates the squared mahalanobis distance for X to all components. Returns an
-    #array of dim N x K for N datapoints, K mixture components containing the squared
-    #mahalanobis distance from each datapoint to each component.
-    def vectorized_sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
-        sq_maha_dist = np.empty((X.shape[0], self.n_components))
-        y1 = np.matmul(X, np.transpose(scale_inv_cholesky_, (2,0,1)))
-        y2 = np.sum(loc_.T[:,np.newaxis,:] * scale_inv_cholesky_, axis=0)
-        y = np.transpose(y1, (1,0,2)) - y2.T
-        return np.sum(y**2, axis=2)
 
     #Gets the inverse of the cholesky decomposition of the scale matrix.
     def get_scale_inv_cholesky(self, scale_cholesky_, scale_inv_cholesky_):
@@ -667,7 +661,9 @@ class EMStudentMixture():
     #Returns log p(X | theta) + log mix_weights. This is called by other class
     #functions which check before calling it that the model has been fitted.
     def get_weighted_loglik(self, X):
-        sq_maha_dist = self.sq_maha_distance(X, self.location_, self.scale_inv_cholesky_)
+        sq_maha_dist = np.empty((X.shape[0], self.n_components))
+        squaredMahaDistance(X, self.location, self.scale_inv_cholesky_, 
+                sq_maha_dist)
         loglik = self.get_loglikelihood(X, sq_maha_dist, self.df_, self.scale_cholesky_,
                         self.mix_weights_)
         return loglik + np.log(self.mix_weights_)[np.newaxis,:]

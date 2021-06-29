@@ -10,7 +10,7 @@ from scipy.optimize import newton
 from .variational_hyperparams import VariationalMixHyperparams as Hyperparams
 from .parameter_bundle import ParameterBundle
 from copy import copy
-
+from squaredMahaDistance import squaredMahaDistance
 
 
 
@@ -315,10 +315,12 @@ class VariationalStudentMixture():
         #the first fitting iteration -- this is done by the following function call.
         params = self.initialize_expectations(X, params, hyperparams)
         old_lower_bound, convergence = -np.inf, False
+        sq_maha_dist = np.empty((X.shape[0], self.n_components))
         #For each iteration, we run the E step calculations then the M step
         #calculations, update the lower bound then check for convergence.
         for i in range(self.max_iter):
-            params, sq_maha_dist, score = self.VariationalEStep(X, params)
+            params, sq_maha_dist, score = self.VariationalEStep(X, params,
+                                            sq_maha_dist)
             params = self.VariationalMStep(X, params, hyperparams)
             new_lower_bound = self.update_lower_bound(X, params, hyperparams,
                                                           sq_maha_dist)
@@ -364,7 +366,9 @@ class VariationalStudentMixture():
                                    range(self.n_components)])
 
         params.resp = np.zeros((X.shape[0], self.n_components))
-        sq_maha_dist = self.sq_maha_distance(X, params.loc_, params.scale_inv_chole_)
+        sq_maha_dist = np.empty((X.shape[0], self.n_components))
+        squaredMahaDistance(X, params.loc_, params.scale_inv_chole_,
+                sq_maha_dist)
         assigned_comp = np.argmin(sq_maha_dist, axis=1)
         params.resp[np.arange(X.shape[0]), assigned_comp] = 1.0
         params.a_nm = 0.5 * (params.resp * X.shape[1] + params.df_[np.newaxis,:])
@@ -414,8 +418,9 @@ class VariationalStudentMixture():
     #params.E_gamma --  The expectation of the gamma hidden variable. N x K for K
     #                   components. Mean of a gamma distribution is just a / b.
     #params.E_log_gamma --  The expectation of the log of the hidden variable.
-    def VariationalEStep(self, X, params):
-        sq_maha_dist = self.sq_maha_distance(X, params.loc_, params.scale_inv_chole_)
+    def VariationalEStep(self, X, params, sq_maha_dist):
+        squaredMahaDistance(X, params.loc_, params.scale_inv_chole_,
+                        sq_maha_dist)
         sq_maha_dist = sq_maha_dist * params.wishart_vm[np.newaxis,:] + \
                        X.shape[1] / params.eta_m[np.newaxis,:]
         weighted_loglik = self.variational_loglik(X, params, sq_maha_dist)
@@ -654,10 +659,9 @@ class VariationalStudentMixture():
 
 
     #Calculates the squared mahalanobis distance for X to all components. Returns an
-    #array of dim N x K for N datapoints, K mixture components. This is a non-vectorized
-    #version of the vectorized function below (preseved primarily for troubleshooting,
-    #not actively used at present). It is more readable but slower than the vectorized
-    #version.
+    #array of dim N x K for N datapoints, K mixture components. This is a pure python
+    #version of the C extension which is used at present (and is significantly faster).
+    #This pure python version is preserved for troubleshooting.
     def sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
         sq_maha_dist = np.empty((X.shape[0], scale_inv_cholesky_.shape[2]))
         for i in range(sq_maha_dist.shape[1]):
@@ -666,15 +670,6 @@ class VariationalStudentMixture():
             sq_maha_dist[:,i] = np.sum(y**2, axis=1)
         return sq_maha_dist
 
-
-    #Calculates the squared mahalanobis distance for X to all components. Returns an
-    #array of dim N x K for N datapoints, K mixture components containing the squared
-    #mahalanobis distance from each datapoint to each component.
-    def vectorized_sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
-        y1 = np.matmul(X, np.transpose(scale_inv_cholesky_, (2,0,1)))
-        y2 = np.sum(loc_.T[:,np.newaxis,:] * scale_inv_cholesky_, axis=0)
-        y = np.transpose(y1, (1,0,2)) - y2.T
-        return np.sum(y**2, axis=2)
 
     #Invert a stack of cholesky decompositions of a scale or precision matrix.
     #The inputs chole_array and inv_chole_array must both be of size D x D x K,
@@ -842,7 +837,9 @@ class VariationalStudentMixture():
     #Returns log p(X | theta) + log mix_weights. This is called by other class
     #functions which check before calling it that the model has been fitted.
     def get_weighted_loglik(self, X):
-        sq_maha_dist = self.sq_maha_distance(X, self.location_, self.scale_inv_cholesky_)
+        sq_maha_dist = np.empty((X.shape[0], self.n_components))
+        squaredMahaDistance(X, self.location_, self.scale_inv_cholesky_,
+                        sq_maha_dist)
         loglik = self.get_loglikelihood(X, sq_maha_dist, self.df_, self.scale_cholesky_,
                         self.mix_weights_)
         return loglik + np.log(self.mix_weights_)[np.newaxis,:]
