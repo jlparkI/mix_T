@@ -1,4 +1,4 @@
-import unittest, numpy as np, scipy, sys
+import unittest, numpy as np, scipy, sys, time
 from scipy import stats, spatial
 sys.path.append("..")
 import studenttmixture
@@ -35,7 +35,25 @@ class TestSqMahaDistExtension(unittest.TestCase):
         
         extension_dist = np.zeros((X.shape[0], 2))
         true_dist = np.empty((X.shape[0], 2))
-        squaredMahaDistance(X, loc, chole_inv_cov, extension_dist)
+        #We store the minimum time required for squaredMahaDistance on 100 repeats
+        #and do the same for the pure Python alternative.
+        min_time = np.inf
+        for i in range(100):
+            start = time.time()
+            squaredMahaDistance(X, loc, chole_inv_cov, extension_dist)
+            end = time.time()
+            if end - start < min_time:
+                min_time = end - start
+        print("The min time for the C extension is %s"%min_time)
+        min_time = np.inf
+        for i in range(100):
+            start = time.time()
+            sqdist = FiniteMix.sq_maha_distance(X, loc, chole_inv_cov)
+            end = time.time()
+            if end - start < min_time:
+                min_time = end - start
+        print("The min time for the pure python version is %s"%min_time)
+        
         for i in range(X.shape[0]):
             true_dist[i,0] = scipy.spatial.distance.mahalanobis(X[i,:], loc[0,:],
                             scale_inv1)**2
