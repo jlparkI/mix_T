@@ -1,6 +1,5 @@
 import unittest, numpy as np, scipy, sys
 from scipy import stats, spatial
-sys.path.append("..")
 import studenttmixture
 from studenttmixture.em_student_mixture import EMStudentMixture
 

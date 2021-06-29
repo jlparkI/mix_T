@@ -487,7 +487,6 @@ class EMStudentMixture():
         scale_inv_cholesky_ = np.empty_like(scale_cholesky_)
         scale_inv_cholesky_ = self.get_scale_inv_cholesky(scale_cholesky_,
                             scale_inv_cholesky_)
-
         return loc_, scale_, mix_weights_, scale_cholesky_, scale_inv_cholesky_
 
 
@@ -547,7 +546,7 @@ class EMStudentMixture():
             if np.max(loc_shift) < 1e-3:
                 break
             prior_loc_ = np.copy(loc_)
-        return np.squeeze(loc_, axis=0).T
+        return np.ascontiguousarray(np.squeeze(loc_, axis=0).T)
 
 
 
@@ -662,7 +661,7 @@ class EMStudentMixture():
     #functions which check before calling it that the model has been fitted.
     def get_weighted_loglik(self, X):
         sq_maha_dist = np.empty((X.shape[0], self.n_components))
-        squaredMahaDistance(X, self.location, self.scale_inv_cholesky_, 
+        squaredMahaDistance(X, self.location_, self.scale_inv_cholesky_, 
                 sq_maha_dist)
         loglik = self.get_loglikelihood(X, sq_maha_dist, self.df_, self.scale_cholesky_,
                         self.mix_weights_)

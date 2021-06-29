@@ -1,6 +1,5 @@
 import unittest, numpy as np, scipy, sys, time
 from scipy import stats, spatial
-sys.path.append("..")
 import studenttmixture
 from studenttmixture.em_student_mixture import EMStudentMixture
 from squaredMahaDistance import squaredMahaDistance

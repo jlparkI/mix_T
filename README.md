@@ -8,12 +8,11 @@ for:
 1) Modeling / clustering a dataset using a finite mixture of multivariate Student's
 t distributions fit via the EM algorithm. You can select the number of components
 using either prior knowledge or the information criteria calculated by the model
-(e.g. AIC, BIC).
+(AIC, BIC).
 2) Modeling / clustering a dataset using a mixture of multivariate Student's 
 t distributions fit via the variational mean-field approximation. Depending on the
-hyperparameters you select, the fitting process will automatically "choose" an 
-appropriate number of clusters, so the number of components in this case acts
-as an upper bound.
+hyperparameters you select, the fitting process may kill off unneeded clusters, 
+so the number of components in this case acts as an upper bound.
 3) Modeling / clustering an infinite mixture of Student's t-distributions (i.e. a Dirichlet process). In practice,
 this model is fitted using some small modifications to the mean-field recipe and has
 some of the same advantages and limitations.
@@ -26,12 +25,32 @@ Unittests for the package are in the tests folder.
 
     pip install studenttmixture
 
+Note that starting in version 0.0.2.1, this package contains C extensions and is therefore
+distributed as a source distribution which is automatically compiled on install. 
+This is a little less convenient but provides a large speed increase so that 
+*studenttmixture* is typically significantly faster 
+(see docs for a comparison) than scikitlearn's *GaussianMixture* when fixed_df is used 
+(optimizing the degrees of freedom is slow).
+
+It is unusual but problems with source distribution pip packages that contain C extensions are occasionally
+observed on Windows, e.g. an error similar to this:
+
+    error: Microsoft Visual C++ 14.0 is required.
+
+in the unlikely event you encounter this, I recommend the solution described under this 
+[StackOverflow and links](https://stackoverflow.com/questions/44951456/pip-error-microsoft-visual-c-14-0-is-required).
+
+Finally, if you for whatever reason prefer the pure Python version, install version 0.0.2, i.e.:
+
+    pip install studenttmixture==0.0.2
+
+training for mixture models will run slower but no compilation is required.
+
 ### Usage
 
 - [EMStudentMixture](https://github.com/jlparkI/mix_T/blob/main/Documentation/Finite_Mixture_Docs.md)<br>
 - [VariationalStudentMixture](https://github.com/jlparkI/mix_T/blob/main/Documentation/Variational_Mixture_Docs.md)<br>
-- [Tutorial: Modeling with mixtures of t-distributions](https://github.com/jlparkI/mix_T/blob/main/Documentation/Tutorial.md)<br>
-
+- [Tutorial: Modeling with mixtures](https://github.com/jlparkI/mix_T/blob/main/Documentation/Tutorial.md)<br>
 
 ### Background
 
