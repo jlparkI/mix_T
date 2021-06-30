@@ -339,7 +339,7 @@ class EMStudentMixture():
                 scale_inv_cholesky_):
         mix_weights_ = np.mean(resp, axis=0)
         ru = resp * E_gamma
-        loc_ = np.dot((ru).T, X)
+        loc_ = np.dot(ru.T, X)
         resp_sum = np.sum(ru, axis=0) + 10 * np.finfo(resp.dtype).eps
         loc_ = loc_ / resp_sum[:,np.newaxis]
         for i in range(self.n_components):

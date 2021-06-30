@@ -1,5 +1,7 @@
-### Planned modifications for version 0.0.3
+### Planned modifications for version 0.0.2.2 - 0.0.3
 
+- Add the ability to initialize cluster centers using scikit-learn's kmeans.
+- Improve the k++ algorithm for initializing cluster centers in this package.
 - Both EMStudentMixture and VariationalStudentMixture will be modified to inherit
 from a base class to avoid redundancy (since some functions are shared between them).
 - The infinite mixture option will be added to VariationalStudentMixture.

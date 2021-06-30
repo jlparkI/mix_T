@@ -8,7 +8,6 @@ Fitting mixtures of t-distributions -- a tutorial
 
 ### Additional Background
 - [The variational mean-field formula](https://github.com/jlparkI/mix_T/blob/main/Documentation/variational_mean_field.pdf)<br>
-- [The variational mean-field update equations]<br>
 
 # Introduction
 
