@@ -7,7 +7,7 @@ Fitting mixtures of t-distributions -- a tutorial
 - [Variational mean-field: choosing hyperparameters](#HyperparameterSelection)
 
 ### Additional Background
-- [The variational mean-field formula](https://github.com/jlparkI/mix_T/blob/main/Documentation/variational_mean_field.pdf)<br>
+- [What is mean-field?](https://jlparki.github.io/mean_field.pdf)<br>
 
 # Introduction
 

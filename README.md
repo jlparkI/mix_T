@@ -51,7 +51,7 @@ training for mixture models will run slower but no compilation is required.
 
 ### Background
 
-- [Deriving the mean-field formula](https://github.com/jlparkI/mix_T/blob/main/Documentation/variational_mean_field.pdf)<br>
+- [Deriving the mean-field formula](https://jlparki.github.io/mean_field.pdf)<br>
 
 ### Upcoming in future versions
 
