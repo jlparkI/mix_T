@@ -36,7 +36,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         samples = np.vstack(samples)
         #We set a low value for tol to get the fit as "tight" as possible.
         FiniteMix = EMStudentMixture(fixed_df=False, random_state=123,
-                n_components=3, max_iter=1500, tol=1e-7, init_type="k++")
+                n_components=3, max_iter=1500, tol=1e-7)
         FiniteMix.fit(samples)
 
         #Retrieve the fit parameters and sort them so they can be compared to
@@ -162,7 +162,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         x = TrueFiniteMix.sample(num_samples=500, random_seed=123)
         
         FittedFiniteMix = EMStudentMixture(fixed_df=False, random_state=123,
-                n_components=1, max_iter=1500, tol=1e-7, init_type="k++")
+                n_components=1, max_iter=1500, tol=1e-7)
         FittedFiniteMix.fit(x)
 
         #Retrieve the fit parameters. They should be very close to the true ones.

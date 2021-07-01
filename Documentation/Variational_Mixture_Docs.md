@@ -143,7 +143,7 @@ plt.show()
 #and might enable us to get better results than we could with EM.
 
 student_model = VSM(n_components=6, tol=1e-5, weight_conc_prior = 1e-3, 
-        mean_cov_prior = 1, df=4, random_state = 123, fixed_df=True, n_init=3)
+        mean_cov_prior = 1, df=4, random_state = 1, fixed_df=True, n_init=3)
 
 student_model.fit(x)
 

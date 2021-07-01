@@ -36,7 +36,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         samples = np.vstack(samples)
         #We set a low value for tol to get the fit as "tight" as possible.
         VarMix = VariationalStudentMixture(fixed_df=False, random_state=123,
-                n_components=3, max_iter=4000, tol=1e-7, init_type="k++")
+                n_components=3, max_iter=4000, tol=1e-7)
         VarMix.fit(samples)
 
         #Retrieve the fit parameters and sort them so they can be compared to
@@ -159,7 +159,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         x = TrueVarMix.sample(num_samples=500, random_seed=123)
         
         FittedVarMix = VariationalStudentMixture(fixed_df=False, random_state=123,
-                n_components=1, max_iter=1500, tol=1e-7, init_type="k++")
+                n_components=1, max_iter=1500, tol=1e-7)
         FittedVarMix.fit(x)
 
         #Retrieve the fit parameters. They should be very close to the true ones.

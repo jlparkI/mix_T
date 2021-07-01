@@ -9,7 +9,6 @@ from scipy.special import gamma, logsumexp, digamma, polygamma, loggamma
 from scipy.optimize import newton
 from .variational_hyperparams import VariationalMixHyperparams as Hyperparams
 from .parameter_bundle import ParameterBundle
-from copy import copy
 from squaredMahaDistance import squaredMahaDistance
 
 
@@ -90,7 +89,7 @@ class VariationalStudentMixture():
 
     def __init__(self, n_components = 2, tol=1e-5, max_iter=2000, n_init=1,
             df = 4.0, fixed_df = True, random_state=123, verbose=False,
-            init_type = "k++", scale_inv_prior=None, loc_prior=None,
+            init_type = "kmeans", scale_inv_prior=None, loc_prior=None,
             mean_cov_prior = 1e-2, weight_conc_prior=None, wishart_dof_prior = None,
             max_df = 100):
         self.max_df = max_df
@@ -309,7 +308,8 @@ class VariationalStudentMixture():
     #param_bundle   --  Object containing all fit parameters and all values needed to calculate
     #                   the lower bound.
     def fitting_restart(self, X, random_state, hyperparams):
-        params = ParameterBundle(X, self.n_components, self.start_df, random_state)
+        params = ParameterBundle(X, self.n_components, self.start_df, random_state,
+                        self.init_type)
         
         #The param_bundle has several expectations that need to be initialized before
         #the first fitting iteration -- this is done by the following function call.
@@ -328,7 +328,7 @@ class VariationalStudentMixture():
             if abs(change) < self.tol:
                 convergence = True
                 break
-            old_lower_bound = copy(new_lower_bound)
+            old_lower_bound = new_lower_bound
             if self.verbose:
                 #print(change)
                 print("Actual lower bound: %s" % new_lower_bound)

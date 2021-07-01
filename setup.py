@@ -19,6 +19,7 @@ setup(
         long_description_content_type="text/markdown",
         url="https://github.com/jlparki/mix_T",
         license="MIT",
-        install_requires=["numpy>=1.19", "scipy>=1.5.0"],
+        install_requires=["numpy>=1.19", "scipy>=1.5.0",
+            "scikit-learn>=0.20.0"],
         ext_modules = [sqMahaExtension]
 )

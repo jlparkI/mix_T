@@ -118,7 +118,7 @@ plt.scatter(np.arange(2, 10), aics, color="red", label="AIC")
 plt.scatter(np.arange(2,10), bics, color="blue", label="BIC")
 plt.title("Information criteria vs number of clusters for toy dataset")
 plt.xlabel("Num clusters")
-#Consistent with expectations (in this case), we see an "elbow" for AIC and a clear minimum for BIC at
+#Consistent with expectations (in this case), we see an "elbow" for AIC and BIC at
 #3 clusters. The absolute value of these information criteria is not important, the location of the "elbow"
 #or minimum is. Note that BIC discriminates much more heavily against models with more parameters.
 ```
