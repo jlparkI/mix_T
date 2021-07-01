@@ -1,5 +1,11 @@
 # studenttmixture
 
+NOTE: As of version 0.0.2.2, this package uses scikit-learn's KMeans clustering
+to initialize component locations. This adds an additional dependency (in
+addition to numpy and scipy) but 
+gives faster convergence, since KMeans provides a good way to choose initial
+cluster centers that are refined by the mixture model.
+
 Mixtures of multivariate Student's t distributions are widely used for clustering
 data that may contain outliers, but scipy and scikit-learn do not at present
 offer classes for fitting Student's t mixture models. This package provides classes
@@ -25,7 +31,7 @@ Unittests for the package are in the tests folder.
 
     pip install studenttmixture
 
-Note that starting in version 0.0.2.1, this package contains C extensions and is therefore
+Note that starting in version 0.0.2.3, this package contains C extensions and is therefore
 distributed as a source distribution which is automatically compiled on install. 
 This is a little less convenient but provides a large speed increase.
 
@@ -37,9 +43,9 @@ observed on Windows, e.g. an error similar to this:
 in the unlikely event you encounter this, I recommend the solution described under this 
 [StackOverflow and links](https://stackoverflow.com/questions/44951456/pip-error-microsoft-visual-c-14-0-is-required).
 
-Finally, if you for whatever reason prefer the pure Python version, install version 0.0.2, i.e.:
+Finally, if you for whatever reason prefer the pure Python version, install version 0.0.2.2, i.e.:
 
-    pip install studenttmixture==0.0.2
+    pip install studenttmixture==0.0.2.2
 
 training for mixture models will run slower but no compilation is required.
 

@@ -293,6 +293,8 @@ class EMStudentMixture():
         #We use the C extension to calculate squared mahalanobis distance and pass
         #it the array in which we would like to store the output.
         squaredMahaDistance(X, loc_, scale_inv_cholesky_, sq_maha_dist)
+        #sq_maha_dist = self.sq_maha_distance(X, loc_, scale_inv_cholesky_)
+        
         loglik = self.get_loglikelihood(X, sq_maha_dist, df_, 
                 scale_cholesky_, mix_weights_)
 
@@ -637,6 +639,8 @@ class EMStudentMixture():
         sq_maha_dist = np.empty((X.shape[0], self.n_components))
         squaredMahaDistance(X, self.location_, self.scale_inv_cholesky_, 
                 sq_maha_dist)
+        #sq_maha_dist = self.sq_maha_distance(X, loc_, scale_inv_cholesky_)
+        
         loglik = self.get_loglikelihood(X, sq_maha_dist, self.df_, self.scale_cholesky_,
                         self.mix_weights_)
         return loglik + np.log(self.mix_weights_)[np.newaxis,:]

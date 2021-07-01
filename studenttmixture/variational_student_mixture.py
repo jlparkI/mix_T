@@ -369,6 +369,8 @@ class VariationalStudentMixture():
         sq_maha_dist = np.empty((X.shape[0], self.n_components))
         squaredMahaDistance(X, params.loc_, params.scale_inv_chole_,
                 sq_maha_dist)
+        #sq_maha_dist = self.sq_maha_distance(X, params.loc_, params.scale_inv_chole_)
+        
         assigned_comp = np.argmin(sq_maha_dist, axis=1)
         params.resp[np.arange(X.shape[0]), assigned_comp] = 1.0
         params.a_nm = 0.5 * (params.resp * X.shape[1] + params.df_[np.newaxis,:])
@@ -421,6 +423,8 @@ class VariationalStudentMixture():
     def VariationalEStep(self, X, params, sq_maha_dist):
         squaredMahaDistance(X, params.loc_, params.scale_inv_chole_,
                         sq_maha_dist)
+        #sq_maha_dist = self.sq_maha_distance(X, params.loc_, params.scale_inv_chole_)
+        
         sq_maha_dist = sq_maha_dist * params.wishart_vm[np.newaxis,:] + \
                        X.shape[1] / params.eta_m[np.newaxis,:]
         weighted_loglik = self.variational_loglik(X, params, sq_maha_dist)
@@ -840,6 +844,8 @@ class VariationalStudentMixture():
         sq_maha_dist = np.empty((X.shape[0], self.n_components))
         squaredMahaDistance(X, self.location_, self.scale_inv_cholesky_,
                         sq_maha_dist)
+        #sq_maha_dist = self.sq_maha_distance(X, self.location_, self.scale_inv_cholesky_)
+        
         loglik = self.get_loglikelihood(X, sq_maha_dist, self.df_, self.scale_cholesky_,
                         self.mix_weights_)
         return loglik + np.log(self.mix_weights_)[np.newaxis,:]
