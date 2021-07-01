@@ -11,6 +11,8 @@ from squaredMahaDistance import squaredMahaDistance
 from sklearn.cluster import KMeans
 from .mixture_base_class import MixtureBaseClass
 
+
+
 #################################################################################
 
 #This class is used to fit a finite student's t mixture using the EM algorithm (see

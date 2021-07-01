@@ -11,7 +11,7 @@ import studenttmixture
 from studenttmixture import VariationalStudentMixture
 
 VariationalStudentMixture(n_components=2, tol=1e-5, max_iter=2000, n_init=1, df=4.0, 
-fixed_df=True, random_state=123, verbose=False, init_type="k++", scale_inv_prior=None,
+fixed_df=True, random_state=123, verbose=False, init_type="kmeans", scale_inv_prior=None,
 loc_prior=None, mean_cov_prior = 1e-2, weight_conc_prior=None, wishart_dof_prior = None,
 max_df = 100)
 ```
@@ -32,10 +32,10 @@ Optimizing df may provide a better fit and may be informative but also tends to 
 convergence.
   * *random_state*<br>The seed for the random number generator.
   * *verbose*<br>Whether to print the lower bound and change in lower bound during fitting.
-  * *init_type*<br>If "k++", the component locations are initialized
-the KMeans++ procedure described by Arthur and Vassilvitskii (2007), which generally gives reasonably good
-starting locations. "kmeans" is not currently offered as an option for this class but will be added in
-version 0.0.3.
+  * *init_type*<br>If "kmeans", the component locations are initialized using k-means
+  clustering using the scikit-learn library. If "k++", the component locations are initialized
+the KMeans++ procedure described by Arthur and Vassilvitskii (2007). KMeans is the default and
+generally gives good results.
   * *scale_inv_prior*<br>The prior for the inverse of the scale matrix (the precision matrix). If supplied,
 must be a square positive definite matrix of size D x D. If None is indicated, the model will use a reasonable
 default (the inverse of the diagonal matrix constructed using the diagonal elements of the covariance

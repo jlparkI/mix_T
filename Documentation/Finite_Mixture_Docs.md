@@ -12,7 +12,7 @@ from studenttmixture import EMStudentMixture
 
 EMStudentMixture(n_components=2, tol=1e-5,
 reg_covar=1e-6, max_iter=1000, n_init=1, df=4, fixed_df=True,
-random_state=123, verbose=False, init_type="k++")
+random_state=123, verbose=False, init_type="kmeans")
 ```
 
 ### Parameters
@@ -34,8 +34,9 @@ convergence.
   * *random_state*<br>The seed for the random number generator.
   * *verbose*<br>Whether to print the lower bound and change in lower bound during fitting.
   * *init_type*<br>Must be one of "k++" or "kmeans". If "k++", the component locations are initialized
-the KMeans++ procedure described by Arthur and Vassilvitskii (2007), which generally gives reasonably good
-starting locations. If "kmeans", these starting locations are further refined using kmeans clustering.
+the KMeans++ procedure described by Arthur and Vassilvitskii (2007). If "kmeans", locations are
+initialized using clustering with scikit-learn's KMeans. kmeans is the default and generally
+gives good initial locations.
 
 
 ### Attributes
