@@ -9,7 +9,7 @@ from scipy.special import gamma, logsumexp, digamma, polygamma, loggamma
 from scipy.optimize import newton
 from .variational_hyperparams import VariationalMixHyperparams as Hyperparams
 from .parameter_bundle import ParameterBundle
-from squaredMahaDistance import squaredMahaDistance
+from optimized_mstep_functions import squaredMahaDistance
 from .mixture_base_class import MixtureBaseClass 
 
 

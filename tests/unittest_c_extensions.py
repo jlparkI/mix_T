@@ -2,7 +2,7 @@ import unittest, numpy as np, scipy, sys, time
 from scipy import stats, spatial
 import studenttmixture
 from studenttmixture.em_student_mixture import EMStudentMixture
-from squaredMahaDistance import squaredMahaDistance
+from optimized_mstep_functions import squaredMahaDistance
 
 class TestSqMahaDistExtension(unittest.TestCase):
     
@@ -37,10 +37,13 @@ class TestSqMahaDistExtension(unittest.TestCase):
         #We store the minimum time required for squaredMahaDistance on 100 repeats
         #and do the same for the pure Python alternative.
         min_time = np.inf
+        y = np.empty_like(X)
         for i in range(100):
             start = time.time()
-            squaredMahaDistance(X, loc, chole_inv_cov, extension_dist)
+            squaredMahaDistance(X, loc, chole_inv_cov, extension_dist, y)
             end = time.time()
+            import pdb
+            pdb.set_trace()
             if end - start < min_time:
                 min_time = end - start
         print("The min time for the C extension is %s"%min_time)

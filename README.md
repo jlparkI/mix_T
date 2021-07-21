@@ -1,11 +1,5 @@
 # studenttmixture
 
-NOTE: As of version 0.0.2.2, this package uses scikit-learn's KMeans clustering
-to initialize component locations. This adds an additional dependency (in
-addition to numpy and scipy) but 
-gives faster convergence, since KMeans provides a good way to choose initial
-cluster centers that are refined by the mixture model.
-
 Mixtures of multivariate Student's t distributions are widely used for clustering
 data that may contain outliers, but scipy and scikit-learn do not at present
 offer classes for fitting Student's t mixture models. This package provides classes
@@ -33,7 +27,8 @@ Unittests for the package are in the tests folder.
 
 Note that starting in version 0.0.2.3, this package contains C extensions and is therefore
 distributed as a source distribution which is automatically compiled on install. 
-This is a little less convenient but provides a large speed increase.
+Starting with version 0.0.3, once all planned features are implemented, separate binary 
+distributions for each platform will be added to improve ease of installation.
 
 It is unusual but problems with source distribution pip packages that contain C extensions are occasionally
 observed on Windows, e.g. an error similar to this:

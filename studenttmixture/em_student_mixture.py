@@ -7,7 +7,7 @@ import numpy as np, math
 from scipy.linalg import solve_triangular
 from scipy.special import gammaln, logsumexp, digamma, polygamma
 from scipy.optimize import newton
-from squaredMahaDistance import squaredMahaDistance
+from optimized_mstep_functions import squaredMahaDistance
 from sklearn.cluster import KMeans
 from .mixture_base_class import MixtureBaseClass
 

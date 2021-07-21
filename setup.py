@@ -4,8 +4,8 @@ import os, numpy
 with open("README.md", "r") as fhandle:
     long_description = fhandle.read()
 
-sqMahaExtension = Extension("squaredMahaDistance", sources=[os.path.join("studenttmixture",
-                            "squared_maha_dist.c")], include_dirs=
+mstep_funcs = Extension("optimized_mstep_functions", sources=[os.path.join("studenttmixture",
+                            "optimized_mstep_functions.c")], include_dirs=
                             [numpy.get_include()])
 
 setup(
@@ -21,5 +21,5 @@ setup(
         license="MIT",
         install_requires=["numpy>=1.19", "scipy>=1.5.0",
             "scikit-learn>=0.20.0"],
-        ext_modules = [sqMahaExtension]
+        ext_modules = [mstep_funcs]
 )

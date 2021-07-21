@@ -1,16 +1,22 @@
+'''Finite mixture of Student's t-distributions fit using EM.'''
+
+#Author: Jonathan Parkinson <jlparkinson1@gmail.com>
+#License: MIT
+
 from abc import ABCMeta
 import numpy as np
 import numpy as np, math
 from scipy.linalg import solve_triangular
 from scipy.special import gammaln, logsumexp, digamma, polygamma
 from scipy.optimize import newton
-from squaredMahaDistance import squaredMahaDistance
+from optimized_mstep_functions import squaredMahaDistance
 
 #This class serves as a base class for the other mixture classes,
 #uniting functions used by all classes in a single location for
 #ease of maintenance. Since training functions are specific to
 #either the variational or EM fitting approaches, the functions which
-#are shared are those used by fully trained models.
+#are shared are those used for checking user inputs to ensure they 
+#are acceptable and those used by fully trained models.
 
 class MixtureBaseClass(metaclass=ABCMeta):
 
