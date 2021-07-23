@@ -34,17 +34,18 @@ def EM_Mstep_Optimized_Calc(cnp.ndarray[FLOAT64, ndim=2] X,
     cdef cnp.ndarray[FLOAT64, ndim=2] scaled_x = np.empty((N, dims))
     cdef cnp.ndarray[FLOAT64, ndim=2] temp_arr = np.empty((dims, dims))
     cdef cnp.ndarray[FLOAT64, ndim=2] temp_chole_arr = np.empty((dims, dims))
+    cdef cnp.ndarray[FLOAT64, ndim=2] scaled_x_transpose = np.empty((dims, N))
 
     for k in range(n_components):
         for i in range(N):
             for j in range(dims):
                 scaled_x[i,j] = X[i,j] - loc_[k,j]
-                scaled_x[i,j] = scaled_x[i,j] * ru[i,k]
-        fast_matmul(scaled_x.T, scaled_x, temp_arr)
+                scaled_x_transpose[j,i] = scaled_x[i,j] * ru[i,k]
+        fast_matmul(scaled_x_transpose, scaled_x, temp_arr)
         for i in range(dims):
             for j in range(dims):
                 temp_arr[i,j] = temp_arr[i,j] / resp_sum[k]
-            temp_arr[j,j] += reg_covar
+            temp_arr[i,i] += reg_covar
         for i in range(dims):
             for j in range(dims):
                 scale_[i,j,k] = temp_arr[i,j]
@@ -52,11 +53,16 @@ def EM_Mstep_Optimized_Calc(cnp.ndarray[FLOAT64, ndim=2] X,
         info = chole_decomp(temp_arr, dims, lda)
         if info != 0:
             raise ValueError("Error on cholesky decomposition!")
+        for i in range(dims):
+            for j in range(i+1):
+                scale_cholesky_[i,j,k] = temp_arr[j,i]
+            for j in range(i+1, dims):
+                scale_cholesky_[i,j,k] = 0
+        
         info = invert_chole(temp_arr, solution_mat,
                         dims, ncols, lda, ldb)
         for i in range(dims):
             for j in range(dims):
-                scale_cholesky_[i,j,k] = temp_arr[i,j]
                 scale_inv_cholesky_[i,j,k] = solution_mat[i,j]
                 solution_mat[i,j] = 0
             solution_mat[i,i] = 1
@@ -130,4 +136,5 @@ cdef fast_matmul(double[:,::1] A, double[:,::1] B, double[:,::1] C):
 
     dgemm("N", "N", &m, &n, &k, &alpha, &B[0,0], &ldb, &A[0,0],
                 &lda, &beta, &C[0,0], &ldc)
-    
+
+

@@ -4,13 +4,14 @@ import os, numpy
 with open("README.md", "r") as fhandle:
     long_description = fhandle.read()
 
-mstep_funcs = Extension("optimized_mstep_functions", sources=[os.path.join("studenttmixture",
+mstep_funcs = Extension("optimized_mstep_functions", 
+                        sources=[os.path.join("studenttmixture",
                             "optimized_mstep_functions.c")], include_dirs=
                             [numpy.get_include()])
 
 setup(
         name="studenttmixture",
-        version="0.0.2.3",
+        version="0.0.2.4",
         packages=find_packages(),
         author="Jonathan Parkinson",
         author_email="jlparkinson1@gmail.com",

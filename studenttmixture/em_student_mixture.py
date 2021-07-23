@@ -7,10 +7,9 @@ import numpy as np, math
 from scipy.linalg import solve_triangular
 from scipy.special import gammaln, logsumexp, digamma, polygamma
 from scipy.optimize import newton
-from optimized_mstep_functions import squaredMahaDistance
+from optimized_mstep_functions import squaredMahaDistance, EM_Mstep_Optimized_Calc
 from sklearn.cluster import KMeans
 from .mixture_base_class import MixtureBaseClass
-
 
 
 #################################################################################
@@ -256,19 +255,12 @@ class EMStudentMixture(MixtureBaseClass):
         loc_ = np.dot(ru.T, X)
         resp_sum = np.sum(ru, axis=0) + 10 * np.finfo(resp.dtype).eps
         loc_ = loc_ / resp_sum[:,np.newaxis]
-        for i in range(self.n_components):
-            scaled_x = X - loc_[i,:][np.newaxis,:]
-            scale_[:,:,i] = np.dot((ru[:,i:i+1] * scaled_x).T,
-                            scaled_x) / resp_sum[i]
-            scale_[:,:,i].flat[::X.shape[1] + 1] += self.reg_covar
-            scale_cholesky_[:,:,i] = np.linalg.cholesky(scale_[:,:,i])
-        #We really need the cholesky decomposition of
-        #the precision matrix (inverse of scale), but do not want to take 
-        #the inverse directly to avoid possible numerical stability issues.
-        #We get what we want using the cholesky decomposition of the scale matrix
-        #from the following function call.
-        scale_inv_cholesky_ = self.get_scale_inv_cholesky(scale_cholesky_,
-                            scale_inv_cholesky_)
+        
+        #This call to the Cython extension updates the scale, scale cholesky
+        #and scale inv cholesky matrices and is significantly faster than a pure
+        #Python implementation for a significant number of clusters or dimensions.
+        EM_Mstep_Optimized_Calc(X, ru, scale_, scale_cholesky_,
+                        scale_inv_cholesky_, loc_, resp_sum, self.reg_covar)
         if self.fixed_df == False:
             df_ = self.optimize_df(X, resp, E_gamma, df_)
         return mix_weights_, loc_, scale_, scale_cholesky_, scale_inv_cholesky_, df_

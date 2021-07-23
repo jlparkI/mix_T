@@ -6,13 +6,11 @@ offer classes for fitting Student's t mixture models. This package provides clas
 for:
 
 1) Modeling / clustering a dataset using a finite mixture of multivariate Student's
-t distributions fit via the EM algorithm. You can select the number of components
-using either prior knowledge or the information criteria calculated by the model
-(AIC, BIC).
+t distributions fit via the EM algorithm. This is analogous to scikit-learn's 
+GaussianMixture.
 2) Modeling / clustering a dataset using a mixture of multivariate Student's 
-t distributions fit via the variational mean-field approximation. Depending on the
-hyperparameters you select, the fitting process may kill off unneeded clusters, 
-so the number of components in this case acts as an upper bound.
+t distributions fit via the variational mean-field approximation. This is analogous to
+scikit-learn's BayesianGaussianMixture.
 3) Modeling / clustering an infinite mixture of Student's t-distributions (i.e. a Dirichlet process). In practice,
 this model is fitted using some small modifications to the mean-field recipe and has
 some of the same advantages and limitations.
