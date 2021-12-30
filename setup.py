@@ -11,7 +11,7 @@ mstep_funcs = Extension("optimized_mstep_functions",
 
 setup(
         name="studenttmixture",
-        version="0.0.2.4",
+        version="0.0.2.5",
         packages=find_packages(),
         author="Jonathan Parkinson",
         author_email="jlparkinson1@gmail.com",
