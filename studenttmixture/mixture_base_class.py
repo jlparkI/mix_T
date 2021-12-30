@@ -291,7 +291,7 @@ class MixtureBaseClass(metaclass=ABCMeta):
             if np.isinf(self.df_[i]):
                 x = 1.0
             else:
-                x = rng.chisquare(self.df_[i], size=samples_per_component[i])
+                x = rng.chisquare(self.df_[i], size=samples_per_component[i]) / self.df[i]
             comp_sample = rng.multivariate_normal(np.zeros(self.location_.shape[1]),
                             self.scale_[:,:,i], size=samples_per_component[i])
             sample_data.append(self.location_[i,:] + comp_sample / np.sqrt(x)[:,np.newaxis])
