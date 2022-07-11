@@ -1,18 +1,53 @@
+"""Describes the VariationalMixHyperparams class, used to store 
+user-specified hyperparameters for the VariationalStudentMix class
+in a convenient container.
+
+Author: Jonathan Parkinson <jlparkinson1@gmail.com>
+License: MIT
+"""
 import numpy as np
 
-#A simple helper class to store all model hyperpameters in one convenient bundle.
-#The hyperparameters are needed during fitting and are not modified at any time.
-#Initially they are set to values passed in by the user, which for loc_prior and scale_inv_prior
-#may be None, indicating the user wants to initialize those two based on the data (an empirical
-#Bayes approach).
-#Either way, when fitting begins, VariationalStudentMixture.fit() will call
-#VariationalMixHyperparams.initialize() to check the stored hyperparameter values,
-#ensure they are valid and set loc_prior and scale_inv_prior to data driven defaults if the
-#user did in fact set them to None.
 class VariationalMixHyperparams():
+    """Stores all model hyperpameters in one convenient bundle.
+    The hyperparameters are needed during fitting and are not modified at any time.
+    Initially they are set to values passed in by the user, which for loc_prior and scale_inv_prior
+    may be None, indicating the user wants to initialize those two based on the data (an empirical
+    Bayes approach). If they are None then they are initialized here.
+
+    Attributes:
+        loc_prior (np.ndarray): The prior for the locations of the mixture components.
+        S0 (np.ndarray): An M x M x K array (for M features, K components)
+            that is the prior for the inverse of the scale matrices.
+        kappa0 (float): The weight concentration prior. Large values cause
+            model fitting to prefer many components, small values few components.
+        eta0 (float): The diagonal value for the covariance matrix of the 
+            prior for the location of the components of the mixture.
+        wishart_v0 (float): The degrees of freedom parameter for the Wishart
+            prior on the scale matrices.
+    """
 
     def __init__(self, X, loc_prior, scale_inv_prior, weight_concentration_prior = 1.0,
                  wishart_v0 = 1.0, mean_covariance_prior = 1e-3, n_components = 1):
+        """Constructor for VariationalMixHyperparams.
+
+        Args:
+            X (np.ndarray): The N x M training data array, for N datapoints with M features.
+        loc_prior (np.ndarray): The prior for the locations of the mixture components.
+        scale_inv_prior (np.ndarray): An M x M x K array (for M features, K components)
+            that is the prior for the inverse of the scale matrices.
+        weight_concentration_prior (float): The weight concentration prior. 
+            Large values cause model fitting to prefer many components, 
+            small values few components. Defaults to 1.0.
+        wishart_v0 (float): The degrees of freedom parameter for the Wishart
+            prior on the scale matrices.
+        mean_covariance_prior (float): The diagonal value for the covariance matrix of the 
+            prior for the location of the components of the mixture.
+        n_components (int): The number of mixture components.
+
+        Raises:
+            ValueError: If the prior values supplied by caller are invalid (e.g.
+                the loc_prior is not a numpy array).
+        """
         self.loc_prior = loc_prior
         self.S0 = scale_inv_prior
         self.kappa0 = weight_concentration_prior

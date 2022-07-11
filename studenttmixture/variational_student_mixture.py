@@ -1,7 +1,8 @@
-'''Finite mixture of Student's t-distributions fit using variational mean-field.'''
+"""Finite mixture of Student's t-distributions fit using variational mean-field.
 
-#Author: Jonathan Parkinson <jlparkinson1@gmail.com>
-#License: MIT
+Author: Jonathan Parkinson <jlparkinson1@gmail.com>
+License: MIT
+"""
 
 import numpy as np, math
 from scipy.linalg import solve_triangular, solve
@@ -16,82 +17,115 @@ from .mixture_base_class import MixtureBaseClass
 
 #################################################################################
 
-#This class is used to fit a finite student's t mixture using variational mean-field
-#(for details, see the docs). This is a Bayesian approach unlike EM and therefore
-#can be used to approximate the posterior (a crude approximation though,
-#so in general variational techniques are better for prediction than for
-#inference). This shares many elements
-#in common with EM, in particular the "stepwise" approach where some parameters
-#are held fixed while others are updated, but the update calculations are in some
-#respects different, also the lower bound calculations are quite different.
-#
-#INPUTS:
-#n_components   --  the number of components in the mixture. With variational mean-field,
-#                   unlike EM, this is an upper bound, since variational mean-field can 
-#                   "kill off" unneeded components depending on the hyperparameters selected.
-#tol            --  if the change in the lower bound between iterations is less than tol, 
-#                   this restart has converged
-#max_iter       --  the maximum number of iterations per restart before we just assume
-#                   this restart simply didn't converge.
-#n_init         --  the maximum number of fitting restarts.
-#fixed_df       --  a boolean indicating whether df should be optimized or "fixed" to the
-#                   user-specified value.
-#random_state   --  Seed to the random number generator to ensure restarts are reproducible.
-#verbose        --  Print updates to keep user updated on fitting.
-#init_type      --  The type of initialization algorithm -- either "k++" for kmeans++ or 
-#                   "kmeans" for kmeans.
-#scale_inv_prior    --  The prior for the inverse of the scale matrices. Defaults to None.
-#                   If None, this class will use a reasonable data-driven default for the 
-#                   scale prior. If it is not None, it must be of shape D x D x K, 
-#                   for D dimensions and K components. This component should never be
-#                   set to all zeros because it provides some regularization and ensures the
-#                   scale matrices are positive definite, similar to reg_covar in EM.
-#loc_prior      --  The prior for the location of each component. If None it will
-#                   be set to the mean of the data.
-#mean_cov_prior --  The diagonal value for the covariance matrix of the prior for the
-#                   location of the components of the mixture. This essentially determines
-#                   how much weight the model puts on the prior -- a very large value
-#                   will force the model to push all components onto the prior mean!
-#                   Generally use a small nonzero value.
-#weight_conc_prior  --  The weight concentration prior. This is crucial to determining
-#                   the behavior of the algorithm and is one of the most important
-#                   user-determined values. A high value indicates many clusters are
-#                   expected, while a low value indicates only a few are expected.
-#                   If this value is low, the algorithm will tend to "kill off"
-#                   unneeded components. The user may need to tune this for a specific
-#                   problem.
-#wishart_dof_prior  --  The dof parameter for the Wishart prior on the scale matrices.
-#                   Generally can be safely left as None, in which case it will be set to
-#                   the dimensionality of the input.
-#max_df         --  The maximum value for the degrees of freedom parameter. If there
-#                   is no max, the df can gradually creep higher for distributions that
-#                   are approximately normal, leading to very slow convergence since
-#                   the lower bound is still changing, but without really improving the
-#                   fit, since df values > 100 are approximately equivalent to a Gaussian.
-#                   The default is 100; set to np.inf to allow for no maximum df.
-
-#PARAMETERS FROM FIT:
-#mix_weights    --  The mixture weights for each component of the mixture; sums to one.
-#location_      --  Equivalent of mean for a gaussian; the center of each component's 
-#                   distribution. For a student's t distribution, this is called the "location"
-#                   not the mean. Shape is K x D for K components, D dimensions.
-#scale_         --  Equivalent of covariance for a gaussian. Shape is D x D x K for D dimensions,
-#                   K components.
-#scale_cholesky_ -- The cholesky decomposition of the scale matrix. Shape is D x D x K.
-#scale_inv_cholesky_ -- Equivalent to the cholesky decomposition of the precision matrix (inverse
-#                       of the scale matrix). Shape is D x D x K. 
-#df_            --  The degrees of freedom parameter of each student's t distribution. 
-#                   Shape is K for K components. User can either specify a fixed value or
-#                   allow algorithm to optimize.
-#converged_     --  Whether the fit converged.
 
 class VariationalStudentMixture(MixtureBaseClass):
+    """A finite student's t mixture fit using variational mean-field
+    This is a Bayesian approach unlike EM and therefore
+    can be used to approximate the posterior (a crude approximation though,
+    so in general variational techniques are better for prediction than for
+    inference). This shares many elements
+    in common with EM, in particular the "stepwise" approach where some parameters
+    are held fixed while others are updated, but the update calculations are in some
+    respects different, also the lower bound calculations are quite different.
+
+    Attributes:
+        start_df (float): The starting value for the degrees of freedom.
+        fixed_df (bool): If True, degrees of freedom are fixed at the starting
+            value and not optimized.
+        n_components (int): The number of mixture components -- for the VariationalStudentMixture,
+            this is an upper bound (unlike EM).
+        tol (float): The threshold for fitting convergence.
+        max_iter (int): The maximum number of fitting iterations per restart.
+        init_type (str): One of 'kmeans', 'k++'. kmeans is the default and is better,
+            k++ is slightly faster.
+        scale_inv_prior (np.ndarray): An M x M x K array (for M features, K components)
+            that is the prior for the inverse of the scale matrices.
+        loc_prior (np.ndarray): The prior for the locations of the mixture components.
+        mean_cov_prior (float): The diagonal value for the covariance matrix of the 
+            prior for the location of the components of the mixture.
+        weight_conc_prior (float): The weight concentration prior. Large values cause
+            model fitting to prefer many components, small values few components.
+        wishart_dof_prior (float): The degrees of freedom parameter for the Wishart
+            prior on the scale matrices. Defaults to dimensionality of the input
+            (generally the best choice). 
+        n_init (int): The number of restarts
+        random_state (int): The random seed for the random number generator during
+            model initialization.
+        verbose (bool): If True, frequent updates are printed during fitting.
+        mix_weights_ (np.ndarray): The mixture weights of the model. A 1d length K
+            array for K components.
+        location_ (np.ndarray): The locations of the mixture components (analogous
+            to the means of Gaussians in a mixture of Gaussians). A K x M
+            array (for K components, M features).
+        scale_ (np.ndarray): The scale matrices for the mixture components
+            (analogous to the covariance matrices of Gaussians). An M x M x K
+            array for M features, K components.
+        scale_cholesky_ (np.ndarray): The cholesky decomposition of the scale
+            matrices. Same shape as scale_.
+        scale_inv_cholesky_ (np.ndarray): The inverse of the cholesky decompositions,
+            of the scale matrices. Same shape as scale_.
+        converged (bool): Whether model fitting converged.
+        n_iter (int): The number of iterations to date during model fitting.
+        df_ (np.ndarray): The degrees of freedom for each model component. This is a 
+            1d length K numpy array for K components.
+        final_lower_bound (float): The final lower bound achieved at the end of fitting.
+        resp (np.ndarray): The N x K array of responsibilities (the responsibility of
+            each cluster for each datapoint in the training set).
+    """
 
     def __init__(self, n_components = 2, tol=1e-5, max_iter=2000, n_init=1,
             df = 4.0, fixed_df = True, random_state=123, verbose=False,
             init_type = "kmeans", scale_inv_prior=None, loc_prior=None,
-            mean_cov_prior = 1e-2, weight_conc_prior=None, wishart_dof_prior = None,
+            mean_cov_prior = 1e-2, weight_conc_prior=1e-2, wishart_dof_prior = None,
             max_df = 100):
+        """Constructor for VariationalStudentMixture class.
+
+        Args:
+            n_components (int): The number of mixture components. For variational mean-field,
+                UNLIKE EM, this is an upper bound. Defaults to 2.
+            tol (float): The threshold below which the fitting algorithm is deemed to have
+                converged. Defaults to 1e-5, which is a good default value.
+            max_iter (int): The maximum number of iterations per restart. Defaults to 2000.
+            n_init (int): The number of restarts (since the fitting procedure can converge on
+                 a suboptimal local maximum). Defaults to 1.
+            fixed_df (bool): If True, degrees of freedom are not optimized for any cluster
+                and are fixed at the starting value. Defaults to True.
+            random_state (int): The random seed for the random number generator during model
+                initialization.
+            verbose (bool): If True, the model prints updates frequently during fitting.
+            init_type (str): One of 'kmeans', 'k++'. kmeans is better, k++ is slightly 
+                faster.
+            scale_inv_prior: The prior for the inverse of the scale matrices. Defaults to 
+                None. If None, this class will use a reasonable data-driven default for
+                the scale prior. If it is not None, it must be a numpy array of shape 
+                M x M x K, for M features and K components. This should never be
+                set to all zeros because it provides some regularization and ensures
+                scale matrices are positive definite, similar to reg_covar in EM.
+            loc_prior: The prior for the location of each component. If None it will
+                be set to the mean of the data.
+            mean_cov_prior (float): The diagonal value for the covariance matrix of the prior
+                for the location of the components of the mixture. This essentially
+                determines how much weight the model puts on the prior -- a very large
+                value will force the model to push all components onto loc_prior!
+                Generally use a small nonzero value. Defaults to 1e-2.
+            weight_conc_prior (float): The weight concentration prior. This is crucial
+                to determining the behavior of the algorithm and is one of the most
+                important priors. A high value indicates many clusters are expected,
+                while a low value indicates only a few are expected. If this value is
+                low, the algorithm will tend to "kill off" unneeded components, whereas
+                if high, it will tend to use the full n_components clusters. Defaults
+                to 1e-2.
+            wishart_dof_prior: The dof parameter for the Wishart prior on the scale
+                matrices. If None, it will be set to the dimensionality of the input.
+                This is the default and generally the best choice.
+            max_df (float): The maximum value for the degrees of freedom parameter.
+                If there is no max, the df can gradually creep higher for distributions
+                that are approximately normal, leading to very slow convergence since
+                the lower bound is still changing, but without really improving the
+                quality of the fit, since df values > 100 are approximately equivalent
+                to a Gaussian. The default is 100. Set to np.inf to allow for no maximum
+                df.
+        """
         super().__init__()
         self.max_df = max_df
         if self.max_df is None:
@@ -102,28 +136,23 @@ class VariationalStudentMixture(MixtureBaseClass):
         
         self.check_user_params(n_components, tol, 1e-3, max_iter, n_init, df, random_state,
                 init_type)
-        #General model parameters specified by user.
         self.start_df = float(df)
         self.fixed_df = fixed_df
         self.n_components = n_components
         self.tol = tol
         self.max_iter = max_iter
         self.init_type = init_type
-        #Hyperparameters. These are unique to the variational mixture.
-        #Any that are None will be calculated using a call to Hyperparams.initialize()
-        #when fit is called.
+        
         self.scale_inv_prior = scale_inv_prior
         self.loc_prior = loc_prior
         self.mean_cov_prior = mean_cov_prior
         self.weight_conc_prior = weight_conc_prior
         self.wishart_dof_prior = wishart_dof_prior
-        #the number of restarts -- this is different from max_iter, which is the maximum 
-        #number of iterations per restart.
+        
         self.n_init = n_init
         self.random_state = random_state
         self.verbose = verbose
-        #The model fit parameters are all initialized to None and will be set 
-        #if / when a model is fitted.
+        
         self.mix_weights_ = None
         self.location_ = None
         self.scale_ = None
@@ -141,21 +170,22 @@ class VariationalStudentMixture(MixtureBaseClass):
 
 
 
-    #Function for fitting a model using the parameters the user
-    #selected when creating the model object.
-    #
-    #INPUTS
-    #X              --  The raw data for fitting. This must be either a 1d array, in which case
-    #                   self.check_fitting_data will reshape it to a 2d 1-column array, or
-    #                   a 2d array where each column is a feature and each row a datapoint.
-    #use_score      --  A boolean. If True, instead of using the variational lower bound
-    #                   to select the best model from n_init, we use the model score.
-    #                   If False, we keep the model with the best variational lower bound.
-    #                   Using score instead prioritizes models with larger likelihood.
-    #                   Generally both approaches should give the same result, but 
-    #                   in some situations there may be interesting differences.
-    #                   Defaults to True.
     def fit(self, X, use_score = False):
+        """Fits the model to training data set X by calling fitting_restart n_init
+        times and saving the best result.
+
+        Args:
+            X (np.ndarray): The raw data for fitting. This must be either a 1d array, in which case
+                self.check_fitting_data will reshape it to a 2d 1-column array, or
+                a 2d array where each column is a feature and each row a datapoint.
+            use_score (bool): If True, instead of using the variational lower bound
+                to select the best model from n_init, we use the model score.
+                If False, we keep the model with the best variational lower bound.
+                Using score instead prioritizes models with larger likelihood.
+                Generally both approaches should give the same result, but 
+                in some situations there may be interesting differences.
+                Defaults to True.
+        """
         x = self.check_fitting_data(X)
         best_lower_bound = -np.inf
         #Check the user specified hyperparams and for any that are None (indicating user
@@ -199,21 +229,23 @@ class VariationalStudentMixture(MixtureBaseClass):
                         "tol or check data for possible issues.")
     
 
-    #A single fitting restart.
-    #
-    #INPUTS
-    #X              --  The raw data. Must be a 2d array where each column is a feature and
-    #                   each row is a datapoint. The caller (self.fit) ensures this is true.
-    #random_state   --  The seed for the random number generator.
-    #hyperparams    --  A copy of the hyperparameters object passed by the class.
-    #
-    #RETURNED PARAMETERS        
-    #current_bound  --  The lower bound for the current fitting iteration. The caller (self.fit)
-    #                   keeps the set of parameters that have the best associated lower bound.
-    #convergence    --  A boolean indicating convergence or lack thereof.
-    #param_bundle   --  Object containing all fit parameters and all values needed to calculate
-    #                   the lower bound.
     def fitting_restart(self, X, random_state, hyperparams):
+        """Carries out a single restart of the fitting operation.
+
+        Args:
+            X (np.ndarray): The raw data. Must be a 2d array where each column is a feature and
+                each row is a datapoint. The caller (self.fit) ensures this is true.
+            random_state (int): The seed for the random number generator.
+            hyperparams (Hyperparams): A copy of the Hyperparams object containing the hyperparameters
+                specified by the user.
+    
+        Returns:
+            current_bound (float): The lower bound for the current fitting iteration. The caller (self.fit)
+                keeps the set of parameters that have the best associated lower bound.
+            convergence (bool): A boolean indicating convergence or lack thereof.
+            param_bundle (ParameterBundle): Object containing all fit parameters and all 
+                values needed to calculate the lower bound.
+        """
         params = ParameterBundle(X, self.n_components, self.start_df, random_state,
                         self.init_type)
         
@@ -242,19 +274,23 @@ class VariationalStudentMixture(MixtureBaseClass):
 
 
 
-    #This function initializes the expectation values needed before the first fitting
-    #iteration using simple maximum likelihood procedures (in the mean-field formulation
-    #of this problem, they are all interdependent, so maximum likelihood while holding
-    #location_ and scale_inv_ fixed offers a convenient way to get starting estimates).
-    #INPUTS:
-    #X              --  The raw data. Must be a 2d array where each column is a feature and
-    #                   each row is a datapoint.
-    #params         --  Object of class ParameterBundle holding slots for all
-    #                   of the parameters and expectations that will be needed.
-    #
-    #OUTPUTS:
-    #params         --  The updated ParameterBundle.
     def initialize_expectations(self, X, params, hyperparams):
+        """Initializes the expectation values needed before the first fitting
+        iteration using simple maximum likelihood procedures (in the mean-field formulation
+        of this problem, they are all interdependent, so maximum likelihood while holding
+        location_ and scale_inv_ fixed offers a convenient way to get starting estimates).
+        
+        Args:
+            X (np.ndarray): The raw data. Must be a 2d array where each column is a feature and
+                each row is a datapoint.
+            params (ParameterBundle): Object of class ParameterBundle holding slots for all
+                of the parameters and expectations that will be needed.
+            hyperparams (Hyperparams): The Hyperparams or VariationalMixHyperparams object
+                containing the model hyperparameters set by the user.
+
+        Returns:
+            params (ParameterBundle): The updated ParameterBundle.
+        """
         params.eta_m = np.full(shape=int(self.n_components), fill_value = hyperparams.eta0,
                                dtype=np.float64)
         
@@ -273,6 +309,8 @@ class VariationalStudentMixture(MixtureBaseClass):
 
         params.resp = np.zeros((X.shape[0], self.n_components))
         sq_maha_dist = np.empty((X.shape[0], self.n_components))
+        #The C / Cython extension (squaredMahaDistance) is faster than the pure Python
+        #implementation (sq_maha_distance) which is nonetheless useful for testing.
         squaredMahaDistance(X, params.loc_, params.scale_inv_chole_,
                 sq_maha_dist)
         #sq_maha_dist = self.sq_maha_distance(X, params.loc_, params.scale_inv_chole_)
@@ -287,14 +325,21 @@ class VariationalStudentMixture(MixtureBaseClass):
         return params
 
 
-    #At the end of fitting, the parameters need to be transferred from the ParameterBundle
-    #class to the VariationalStudentMixture class so the user can access them easily and
-    #so they can be used to make predictions. In addition, certain parameters that are
-    #not calculated during fitting (the actual mixture weights for example) must
-    #be calculated.
-    #INPUTS:
-    #params         --  Object of class ParameterBundle holding all of the fit parameters.
     def transfer_fit_params(self, X, params, hyperparams):
+        """At the end of fitting, the parameters need to be transferred from the ParameterBundle
+        class to the VariationalStudentMixture class so the user can access them easily and
+        so they can be used to make predictions. In addition, certain parameters that are
+        not calculated during fitting (the actual mixture weights for example) must
+        be calculated.
+        
+        Args:
+            X (np.ndarray): Training data. A numpy array of shape N x M for M features,
+                N datapoints.
+            params (ParameterBundle): Object of class ParameterBundle holding all of 
+                the fit parameters.
+            hyperparams (Hyperparams): The Hyperparams or VariationalMixHyperparams object
+                containing the model hyperparameters set by the user.
+        """
         self.scale_, self.scale_inv_cholesky_, self.scale_cholesky_ = np.empty_like(params.scale_),\
                                                 np.empty_like(params.scale_), np.empty_like(params.scale_)
         for i in range(self.n_components):
@@ -311,22 +356,30 @@ class VariationalStudentMixture(MixtureBaseClass):
 
 
 
-    #The equivalent of the E step in the EM algorithm but for the variational algorithm.
-    #Despite some superficial resemblances and shared calculations, this algorithm makes 
-    #very different assumptions.
-    #
-    #Parameters that are updated:
-    #sq_maha_dist   --  the squared mahalanobis distance, N x K for K components;
-    #params.resp    --  the responsibility of each component for each datapoint, N x K;
-    #params.a_nm    --  the first parameter of the gamma distribution that generates
-    #                   the "hidden variable" in the Gaussian scale mixture rep of the
-    #                   student's t for each datapoint. Shape K for K components.
-    #params.b_nm    --  the second parameter of the gamma distribution that etc. N x K
-    #                   for N samples, K components.
-    #params.E_gamma --  The expectation of the gamma hidden variable. N x K for K
-    #                   components. Mean of a gamma distribution is just a / b.
-    #params.E_log_gamma --  The expectation of the log of the hidden variable.
     def VariationalEStep(self, X, params, sq_maha_dist):
+        """The equivalent of the E step in the EM algorithm but for the variational algorithm.
+        Despite some superficial resemblances and shared calculations, this algorithm makes 
+        very different assumptions.
+
+        Args:
+            X (np.ndarray): Training data. A numpy array of shape N x M for M features,
+                N datapoints.
+            params (ParameterBundle): The object containing all of the current
+                parameters.
+            sq_maha_dist (np.ndarray): An N x K for N datapoints, K components
+                numpy array containing the squared mahalanobis distance for
+                each datapoint from each cluster.
+
+        Returns:
+            params (ParameterBundle): The updated set of parameters. The
+                Estep function only modifies params.resp, params.a_nm,
+                params.b_nm, params.E_gamma and params.E_log_gamma.
+            sq_maha_dist (np.ndarray): The updated squared mahalanobis
+                distance values.
+            score (float): The lower bound used in EM calculations. It is
+                sometimes advantageous to use this in place of the variational
+                lower bound for determining convergence.
+        """
         squaredMahaDistance(X, params.loc_, params.scale_inv_chole_,
                         sq_maha_dist)
         #sq_maha_dist = self.sq_maha_distance(X, params.loc_, params.scale_inv_chole_)
@@ -349,11 +402,26 @@ class VariationalStudentMixture(MixtureBaseClass):
         score = np.mean(logprobnorm)
         return params, sq_maha_dist, score
 
-    #This function is used by the E-step to calculate responsibilities during training. It is slightly
-    #different from the more straightforward likelihood calculation employed for a fitted model
-    #(which is identical to EM) -- remember, despite the superficial similarities, the 
-    #variational model is derived in a very different way, and has some important differences!
+
     def variational_loglik(self, X, params, sq_maha_dist):
+        """This function is used by the E-step as part of responsibility calculation during training. 
+        It is slightly different from the more straightforward likelihood calculation 
+        employed for a fitted model
+        (which is identical to EM) -- remember, despite the superficial similarities, the 
+        variational model is derived in a very different way, and has some important differences!
+
+        Args:
+            X (np.ndarray): An N x M for N datapoints, M features array containing the training
+                data.
+            params (ParameterBundle): The ParameterBundle object containing all current
+                parameters for this iteration of this restart.
+            sq_maha_dist (np.ndarray): The N x K array containing the squared mahalanobis
+                distance for each datapoint for each component.
+
+        Returns:
+            loglik (np.ndarray): The loglikelihood of each datapoint for each cluster.
+                An N x K array.
+        """
         loglik = 0.5 * params.E_logdet[np.newaxis,:] + 0.5 * X.shape[1] * \
                  (-np.log(2 * np.pi) + params.E_log_gamma)
         loglik += params.E_log_weights
@@ -361,25 +429,24 @@ class VariationalStudentMixture(MixtureBaseClass):
         return loglik
    
 
-    #The equivalent of the M step in the EM algorithm but for the variational algorithm.
-    #Despite some superficial resemblances and shared calculations, this algorithm makes 
-    #different assumptions.
-    #
-    #Parameters that are updated:
-    #params.kappa_m     --  The updated parameters of the dirichlet distribution. Shape is K
-    #                       for K components.
-    #params.wishart_vm  --  The updated dof parameters of the Wishart distributions
-    #                       that generate the scale matrices for each component. Shape is K.
-    #params.eta_m       --  The updated mean covariance prior. SHape is K.
-    #params.loc_        --  The location of each component (analogous to mean of a Gaussian). Shape
-    #                       is K x D for K components, D dimensions.
-    #params.scale_      --  The updated scale matrices (analogous to covariance for a Gaussian).
-    #                       Shape is D x D x K for K components, D dimensions.
-    #                       Both the cholesky decomposition of the scale matrices and the inverse of this
-    #                       cholesky decomposition are stored as well.
-    #params.df_         --  Degrees of freedom for each component, shape K. Updated if user
-    #                       so specified.
     def VariationalMStep(self, X, params, hyperparams):
+        """The equivalent of the M step in the EM algorithm but for the variational algorithm.
+        Despite some superficial resemblances and shared calculations, this algorithm makes 
+        different assumptions.
+        
+        Args:
+            X (np.ndarray): Training data. A numpy array of shape N x M for M features,
+                N datapoints.
+            params (ParameterBundle): Object of class ParameterBundle holding all of 
+                the fit parameters.
+            hyperparams (Hyperparams): The Hyperparams or VariationalMixHyperparams object
+                containing the model hyperparameters set by the user.
+       
+        Returns:
+            params (ParameterBundle): The updated set of parameters. The
+                Mstep function modifies params.kappa_m, params.wishart_vm,
+                params.eta_m, params.loc_, params.scale_ and params.df_.
+        """
         ru = params.E_gamma * params.resp
         ru_sum = np.sum(ru, axis=0) + 10 * np.finfo(params.resp.dtype).eps
         resp_sum = np.sum(params.resp, axis=0) + 10 * np.finfo(params.resp.dtype).eps
@@ -419,17 +486,32 @@ class VariationalStudentMixture(MixtureBaseClass):
 
     
 
-    #Updates the variational lower bound so we can assess convergence. We leave out
-    #constant terms for simplicity. We evaluate each term of the overall lower bound
-    #formula separately and then sum them to get the lower bound. This is 
-    #unavoidably messy -- the variational lower bound has eight contributing terms,
-    #and there's only so far that we can simplify it.
-    #
-    #TODO: Currently this is written in an unnecessarily verbose and cumbersome format
-    #in order to aid in troubleshooting (it closely parallels the formula for the variational
-    #lower bound derived on paper). Later it may be helpful to simplify this as far as that
-    #is possible. Constant terms can be removed for starters.
     def update_lower_bound(self, X, params, hyperparams, sq_maha_dist):
+        """Updates the variational lower bound so we can assess convergence. We leave out
+        constant terms for simplicity. We evaluate each term of the overall lower bound
+        formula separately and then sum them to get the lower bound. This is 
+        unavoidably messy -- the variational lower bound has eight contributing terms,
+        and there's only so far that we can simplify it.
+
+        TODO: Currently this is written in an unnecessarily verbose and cumbersome format
+        in order to aid in troubleshooting (it closely parallels the formula for the variational
+        lower bound derived on paper). Later it may be helpful to simplify this as far as that
+        is possible. Constant terms can be removed for starters.
+        
+        Args:
+            X (np.ndarray): An N x M for N datapoints, M features array containing the training
+                data.
+            params (ParameterBundle): The ParameterBundle object containing all current
+                parameters for this iteration of this restart.
+            hyperparams (Hyperparams): The Hyperparams or VariationalMixHyperparams object
+                containing the model hyperparameters set by the user.
+            sq_maha_dist (np.ndarray): The N x K array containing the squared mahalanobis
+                distance for each datapoint for each component.
+        
+        Returns:
+            lower_bound (float): The variational lower bound, used to assess convergence
+                and pick the best fit out of the restarts.
+        """
         #compute terms involving p(X | params)
         E_log_pX = -X.shape[1] * np.log(2 * np.pi) + X.shape[1] * params.E_log_gamma
         E_log_pX += params.E_logdet[np.newaxis,:] - params.E_gamma * sq_maha_dist
@@ -496,11 +578,22 @@ class VariationalStudentMixture(MixtureBaseClass):
         return lower_bound
 
 
-    #Gets the normalization term for the Wishart distribution (only required for 
-    #calculating the variational lower bound). The normalization term is calculated
-    #for one component only, so caller must loop over components to get the normalization
-    #term for all components as required for the variational lower bound.
     def wishart_norm(self, W_cholesky, eta, return_log = False):
+        """Gets the normalization term for the Wishart distribution (only required for 
+        calculating the variational lower bound). The normalization term is calculated
+        for one component only, so caller must loop over components to get the normalization
+        term for all components as required for the variational lower bound.
+        
+        Args:
+            W_cholesky (np.ndarray): The inverse of the cholesky decomposition of
+                the scale matrices. A matrix of shape M x M for M features.
+            eta (float): The degrees of freedom of the Wishart prior.
+            return_log (bool): If True, return the natural log of the wishart norm 
+                instead of the actual value.
+        Returns:
+            wishart_norm (float): The normalization term for the Wishart distribution
+                given the input values.
+        """
         logdet_term = -eta * np.sum(np.log(np.diag(W_cholesky)))
         inverse_term = np.sum([loggamma( 0.5 * (eta - i)) for i in 
                     range(W_cholesky.shape[0])])
@@ -512,8 +605,24 @@ class VariationalStudentMixture(MixtureBaseClass):
 
 
 
-    #Optimizes the df parameter using Newton Raphson.
     def optimize_df(self, X, params, ru_sum, resp_sum):
+        """Optimizes the df parameter using Newton Raphson.
+        
+        Args:
+            X (np.ndarray): The input data, a numpy array of shape N x M
+                for N datapoints, M features.
+            params (ParameterBundle): The current set of parameters for
+                this iteration of this restart.
+            ru_sum (np.ndarray): A length K numpy array containing the
+                sum of the u-term times the responsibility across
+                the datapoints.
+            resp_sum (np.ndarray): A length K numpy array containing the
+                sum of the responsibilities across the datapoints.
+
+        Returns:
+            params (ParameterBundle): The ParameterBundle with
+                the values for degrees of freedom updated.
+        """
         #First calculate the constant term of the degrees of freedom optimization
         #expression so that it does not need to be recalculated on each iteration.
         #Notice some subtle differences from EM here.
@@ -546,33 +655,50 @@ class VariationalStudentMixture(MixtureBaseClass):
         return params
 
 
-    # First derivative w/r/t df. This is used to 
-    #optimize the input value (dof) via the Newton-Raphson algorithm using the scipy.optimize.
-    #newton function (see self.optimize.df).
     def dof_first_deriv(self, dof, constant_term):
+        """First derivative of the complete data log likelihood w/r/t df. This is used to 
+        optimize the input value (dof) via the Newton-Raphson algorithm using the scipy.optimize.
+        newton function (see self.optimize_df).
+        """
         clipped_dof = np.clip(dof, a_min=1e-9, a_max=None)
         return constant_term - digamma(dof * 0.5) + np.log(0.5 * clipped_dof)
 
-    #Second derivative w/r/t df. This is used to
-    #optimize the input value (dof) via the Newton-Raphson algorithm using the
-    #scipy.optimize.newton function (see self.optimize_df).
     def dof_second_deriv(self, dof, constant_term):
+        """Second derivative of the complete data log likelihood w/r/t df. This is used to
+        optimize the input value (dof) via the Newton-Raphson algorithm using the
+        scipy.optimize.newton function (see self.optimize_df).
+        """
         return -0.5 * polygamma(1, 0.5 * dof) + 1 / dof
 
 
-    #Third derivative of the complete data log likelihood w/r/t df. This is used to optimize
-    #the input value (dof) via the Newton-Raphson algorithm using the scipy.optimize.newton
-    #function (see self.optimize_df). 
     def dof_third_deriv(self, dof, constant_term):
+        """Third derivative of the complete data log likelihood w/r/t df. This is used to optimize
+        the input value (dof) via the Newton-Raphson algorithm using the scipy.optimize.newton
+        function (see self.optimize_df). 
+        """
         return -0.25 * polygamma(2, 0.5 * dof) - 1 / (dof**2)
 
 
 
-    #Calculates the squared mahalanobis distance for X to all components. Returns an
-    #array of dim N x K for N datapoints, K mixture components. This is a pure python
-    #version of the C extension which is used at present (and is significantly faster).
-    #This pure python version is preserved for troubleshooting.
     def sq_maha_distance(self, X, loc_, scale_inv_cholesky_):
+        """Calculates the squared mahalanobis distance for X to all components. Returns an
+        array of dim N x K for N datapoints, K mixture components.
+        This is slower than the C extension so it is primarily used for testing
+        purposes.
+
+        Args:
+            X (np.ndarray): A 2d numpy array containing the input data of shape
+                N x M for N datapoints, M features.
+            loc_ (np.ndarray): A 2d numpy array of shape K x M for K components,
+                M features.
+            scale_inv_cholesky_ (np.ndarray): The inverse of the cholesky 
+                decomposition of the scale matrices.
+
+        Returns:
+            sq_maha_dist (np.ndarray): An N x K for N datapoints, K components
+                numpy array containing the squared mahalanobis distance for
+                each datapoint to each cluster.
+        """
         sq_maha_dist = np.empty((X.shape[0], scale_inv_cholesky_.shape[2]))
         for i in range(sq_maha_dist.shape[1]):
             y = np.dot(X, scale_inv_cholesky_[:,:,i])
@@ -582,33 +708,45 @@ class VariationalStudentMixture(MixtureBaseClass):
 
 
     #Invert a stack of cholesky decompositions of a scale or precision matrix.
-    #The inputs chole_array and inv_chole_array must both be of size D x D x K,
-    #where D is dimensionality of data and K is number of components. inv_chole_array
-    #will be populated with the output and returned.
     def get_scale_inv_cholesky(self, chole_array, inv_chole_array):
+        """Gets the inverse of the cholesky decomposition of the scale matrix.
+
+        Args:
+            scale_cholesky_ (np.ndarray): The cholesky decomposition of the 
+                scale matrices, of shape M x M x K for M features, K components.
+            scale_inv_cholesky_ (np.ndarray): The inverse of the cholesky
+                decomposition of the scale matrices. Same shape as scale_cholesky_.
+                This will be overwritten here.
+
+        Returns:
+            scale_inv_cholesky_ (np.ndarray): The input scale_inv_cholesky_
+                overwritten with the updated inverse of the cholesky decomposition
+                of the scale matrices.
+        """
         for i in range(chole_array.shape[2]):
             inv_chole_array[:,:,i] = solve_triangular(chole_array[:,:,i],
                     np.eye(chole_array.shape[0]), lower=True).T
         return inv_chole_array
 
 
-    '''The remaining functions are called for a fitted model. They are unique to the 
-    Variational class and hence are not stored under the base class, where functions
-    common to both Variational and EM classes are stored.'''
+    #The remaining functions are called for a fitted model. They are unique to the 
+    #Variational class and hence are not stored under the base class, where functions
+    #common to both Variational and EM classes are stored.
     
 
-    #At the end of fitting, with a variational mixture, the user may sometimes find that
-    #some of the components were unnecessary and can be killed off. This function
-    #enables the user to remove empty clusters, which may be cheaper than re-fitting
-    #the model with a smaller number of clusters.
-    #INPUTS
-    #empty_cluster_threshold    --  The number of datapoints below which a cluster
-    #                               is considered empty.
-    #X                          --  The training dataset. Note that this SHOULD be
-    #                               the training dataset -- using a different dataset
-    #                               to decide which clusters are empty could give you
-    #                               very strange results!
     def purge_empty_clusters(self, X, empty_cluster_threshold = 1):
+        """At the end of fitting, with a variational mixture, the user may sometimes find that
+        some of the components were unnecessary and can be killed off. This function
+        enables the user to remove empty clusters, which may be cheaper than re-fitting
+        the model with a smaller number of clusters.
+        
+        Args:
+            empty_cluster_threshold (int): The number of datapoints below which
+                a cluster is considered empty.
+            X (np.ndarray): The training dataset. Note that this SHOULD be the 
+                training dataset -- using a different dataset to decide
+                which clusters are empty could give you very strange results!
+        """
         cluster_probs = self.predict_proba(X)
         cluster_assignments = np.zeros_like(cluster_probs)
         cluster_assignments[np.arange(cluster_probs.shape[0]),
