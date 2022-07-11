@@ -13,7 +13,7 @@ mstep_funcs = Extension("optimized_mstep_functions",
 
 setup(
         name="studenttmixture",
-        version="0.0.2.6",
+        version="1.01",
         packages=find_packages(),
         cmdclass = {"build_ext": build_ext},
         author="Jonathan Parkinson",
