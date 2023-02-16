@@ -37,4 +37,4 @@ in the unlikely event you encounter this, I recommend the solution described und
 
 ### Background
 
-- [Deriving the mean-field formula](https://jlparki.github.io/variational_mean_field.pdf)<br>
+- [Deriving the mean-field formula](https://github.com/jlparkI/mix_T/blob/main/Documentation/variational_mean_field.pdf)<br>
