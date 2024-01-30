@@ -1,17 +1,18 @@
+"""Unit tests for the variational student mixture."""
 import unittest, numpy as np, scipy, sys
 from scipy import stats, spatial
 import studenttmixture
 from studenttmixture.variational_student_mixture import VariationalStudentMixture
 
 
-class TestCoreProbabilityFunctions(unittest.TestCase):
+class TestVariationalMixture(unittest.TestCase):
 
 
-    #Test the full fitting procedure using an artificial dataset. Ensure
-    #the model converges on locations roughly equivalent to those used to generate
-    #the toy dataset. This test uses an artificial dataset composed of student's
-    #t distributions.
     def test_em_fit_students_t(self):
+        """Test the full fitting procedure using an artificial dataset. Ensure
+        the model converges on locations roughly equivalent to those used to generate
+        the toy dataset. This test uses an artificial dataset composed of student's
+        t distributions."""
         print("*********************")
         #Arbitrary scale matrices...
         true_cov = [np.asarray([[0.025, 0.0075, 0.00175],
@@ -24,6 +25,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
                             [0.0, 4.5, 0.0],
                             [0.0, 0.0, 3.2]])]
         true_cov = np.stack(true_cov, axis=-1)
+
         #Arbitrary locations...
         true_loc = np.asarray([[-2.5,3.6,1.2],
                             [3.2,-5.2,-2.1],[4.5,3.6,7.2]])
@@ -87,10 +89,10 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
    
 
 
-    #Generate an arbitrary t-distribution using scipy's t-distribution function,
-    #sample from it and ensure the probabilities calculated by VariationalStudentMixture
-    #are identical.
     def test_log_likelihood_calculation(self):
+        """Generate an arbitrary t-distribution using scipy's t-distribution function,
+        sample from it and ensure the probabilities calculated by VariationalStudentMixture
+        are identical."""
         print("*********************")
         VarMix = VariationalStudentMixture()
         #An arbitrary scale matrix...
@@ -100,9 +102,11 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         chole_covmat = np.linalg.cholesky(covmat).reshape((3,3,1))
         chole_inv_cov = np.empty((3,3,1))
         chole_inv_cov = VarMix.get_scale_inv_cholesky(chole_covmat, chole_inv_cov)
+
         #An arbitrary location...
         loc = np.asarray([[0.156,-0.324,0.456]])
         covmat = covmat.reshape((3,3,1))
+
         #Set up VarMix using the parameters of the distribution.
         VarMix.loc_ = loc
         VarMix.scale_ = covmat
@@ -130,10 +134,10 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         print('\n')
 
 
-    #Test the sampling procedure by sampling from a prespecified distribution,
-    #then fitting a single component model. If all is well, the model fit's
-    #parameters should be very similar to those used for sampling.
     def test_sampling_students_t(self):
+        """Test the sampling procedure by sampling from a prespecified distribution,
+        then fitting a single component model. If all is well, the model fit's
+        parameters should be very similar to those used for sampling."""
         print("*********************")
         #Arbitrary scale matrix...
         true_cov = [np.asarray([[1.6, 0.0, 0.0],
@@ -147,6 +151,7 @@ class TestCoreProbabilityFunctions(unittest.TestCase):
         chole_covmat = np.stack([chole_covmat], axis=-1)
         chole_inv_cov = np.empty((3,3,2))
         chole_inv_cov = TrueVarMix.get_scale_inv_cholesky(chole_covmat, chole_inv_cov)
+
         #Set up VarMix using the parameters of the distribution.
         TrueVarMix.location_ = true_loc
         TrueVarMix.scale_ = true_cov

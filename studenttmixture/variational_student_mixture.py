@@ -15,7 +15,6 @@ from .mixture_base_class import MixtureBaseClass
 
 
 
-#################################################################################
 
 
 class VariationalStudentMixture(MixtureBaseClass):
@@ -773,5 +772,3 @@ class VariationalStudentMixture(MixtureBaseClass):
         self.scale_inv_cholesky_ = np.empty_like(self.scale_cholesky_)
         self.scale_inv_cholesky_ = self.get_scale_inv_cholesky(self.scale_cholesky_,
                             self.scale_inv_cholesky_)
-        
-

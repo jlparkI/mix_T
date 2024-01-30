@@ -1,3 +1,4 @@
+"""Unit tests for the C extension."""
 import unittest, numpy as np, scipy, sys
 from scipy import stats, spatial
 import studenttmixture

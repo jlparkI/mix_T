@@ -207,5 +207,3 @@ cdef fast_matmul(double[:,::1] A, double[:,::1] B, double[:,::1] C):
 
     dgemm("N", "N", &m, &n, &k, &alpha, &B[0,0], &ldb, &A[0,0],
                 &lda, &beta, &C[0,0], &ldc)
-
-

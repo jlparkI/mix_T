@@ -41,10 +41,3 @@ PyMC3 package already provides good tools for that purpose. Rather, it focuses
 on fitting using either EM or variational mean-field. These approaches are much less computationally expensive,
 less well adapted to inference and significantly more suitable for making predictions. Just 
 like scitkit-learn, then, these classes focus on prediction rather than inference.
-
-# ExpectationMaximization
-### Fitting mixtures using EM
-
-
-
-

@@ -439,5 +439,4 @@ class MixtureBaseClass(metaclass=ABCMeta):
             comp_sample = rng.multivariate_normal(np.zeros(self.location_.shape[1]),
                             self.scale_[:,:,i], size=samples_per_component[i])
             sample_data.append(self.location_[i,:] + comp_sample / np.sqrt(x)[:,np.newaxis])
-        return np.vstack(sample_data)
-    
+        return np.vstack(sample_data) 

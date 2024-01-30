@@ -60,6 +60,7 @@ class ParameterBundle():
         self.loc_, self.scale_, self.scale_inv_chole_, self.scale_chole_ = \
                    self.initialize_params(X, n_components, random_state, init_type)
         self.df_ = np.full(shape=n_components, fill_value = start_df)
+
         #The following values are all expectations required for calculating the lower
         #bound and for parameter updates. They are all set to None because the
         #VariationalStudentMixture class will take responsibility for assigning initial
@@ -149,6 +150,7 @@ class ParameterBundle():
         np.random.seed(random_seed)
         loc_ = [X[np.random.randint(0, X.shape[0]-1), :]]
         dist_arr_list = []
+
         for i in range(1, n_components):
             dist_arr = np.sum((X - loc_[i-1])**2, axis=1)
             dist_arr_list.append(dist_arr)
@@ -158,6 +160,7 @@ class ParameterBundle():
             next_center_id = np.random.choice(distmat.shape[0], size=1, p=min_dist)
             loc_.append(X[next_center_id[0],:])
         return np.stack(loc_)
+
 
     def kmeans_initialization(self, X, random_state, n_components):
         """The second alternative for initializing loc_is kmeans clustering. It takes as

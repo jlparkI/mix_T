@@ -551,4 +551,3 @@ class EMStudentMixture(MixtureBaseClass):
         score = self.score(x, perform_model_checks = False)
         n_params = self.get_num_parameters()
         return n_params * np.log(x.shape[0]) - 2 * score * x.shape[0]
-
